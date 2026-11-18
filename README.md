@@ -75,3 +75,9 @@ podman --cgroup-manager=cgroupfs build -f tools/Containerfile.ha -t localhost/ma
 ```
 
 Le [compilateur HA](custom_components/matter_reflex/compiler.py) définit le sous-ensemble d’automatisations pris en charge. Le [moteur embarqué](firmware/main/reflex_engine.cpp) décode les règles. Les [tests](tests/) vérifient notamment le format partagé, les autorisations Matter et le comportement du moteur.
+
+## Licence et contact
+
+Le code de Matter Reflex est distribué sous la [Mozilla Public License 2.0 (MPL-2.0)](LICENSE). La licence autorise l’utilisation commerciale.
+
+Si tu prépares un produit commercial qui intègre Reflex, j’aimerais que tu me contactes avant son lancement. Je serais heureux de savoir ce que tu construis. Tu peux ouvrir une issue sur le dépôt du projet. Cette prise de contact est facultative.
