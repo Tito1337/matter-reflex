@@ -53,6 +53,12 @@ public:
         backoff = 1;
     }
     void maintain() {
+        if (reader) {
+            auto handle = session.Get();
+            // CHIP can mark CASE defunct after an invoke times out while the
+            // read client still waits for the next subscription report.
+            if (!handle.HasValue() || !handle.Value()->IsActiveSession()) disconnect();
+        }
         if (reader || connecting || esp_timer_get_time() < retry_at) return;
         connecting = true;
         Server::GetInstance().GetCASESessionManager()->FindOrEstablishSession(
@@ -185,7 +191,8 @@ CHIP_ERROR invoke(const SessionHandle &session, const reflex::Rule &rule, EventN
 void dispatch(size_t index, EventNumber number) {
     const auto &rule = rule_set->rows[index];
     auto *target = find(rule.target);
-    if (!target || !target->established || !target->session.Get().HasValue()) {
+    auto session = target ? target->session.Get() : Optional<SessionHandle>();
+    if (!target || !target->established || !session.HasValue() || !session.Value()->IsActiveSession()) {
         reflex_runtime::command_result(rule.id, number, kNoSession);
         return;
     }
@@ -194,7 +201,6 @@ void dispatch(size_t index, EventNumber number) {
         reflex_runtime::command_result(rule.id, number, kUnknownState);
         return;
     }
-    auto session = target->session.Get();
     CHIP_ERROR error;
     namespace covering = Clusters::WindowCovering::Commands;
     switch (command.op) {

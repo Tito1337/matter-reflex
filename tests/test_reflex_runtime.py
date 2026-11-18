@@ -270,3 +270,52 @@ async def test_cover_acl_exact_target_and_cleanup():
 def test_cover_acl_rejects_other_clusters_or_privileges(grant):
     with pytest.raises(ReflexError, match="Unsupported ACL"):
         plan([ADMIN], [], SUBJECT, {grant}, 2, 3, 3, True)
+
+
+@pytest.mark.asyncio
+async def test_permission_change_reconciles_with_same_rule_image(monkeypatch):
+    from custom_components.matter_reflex import runtime as integration
+    from custom_components.matter_reflex.compiler import Compilation
+    from custom_components.matter_reflex.wire import digest
+
+    runtime = Runtime.__new__(Runtime)
+    runtime.hass = SimpleNamespace(state=CoreState.running)
+    runtime.entry = SimpleNamespace(
+        entry_id="reflex", data={"matter_entry_id": "matter"}
+    )
+    runtime.node = SUBJECT
+    client = Mock()
+    runtime.client = Mock(return_value=client)
+    runtime.acls = SimpleNamespace(reconcile=AsyncMock())
+    runtime.transfer = AsyncMock()
+    runtime.clear_issue = Mock()
+    runtime.acl_synced = False
+    runtime.synced_permissions = None
+
+    image = b"unchanged rule image"
+    runtime.read_status = AsyncMock(return_value={"hash": digest(image)})
+    before = {15: {(1, 6, 3)}}
+    after = {15: {(1, 6, 3), (1, 8, 3)}}
+    monkeypatch.setattr(integration, "is_reflex", lambda _: True)
+    monkeypatch.setattr(
+        integration.ir, "async_get", lambda _: SimpleNamespace(issues={})
+    )
+    monkeypatch.setattr(
+        integration,
+        "async_compile",
+        AsyncMock(
+            side_effect=[Compilation(image, {}, p) for p in (before, before, after)]
+        ),
+    )
+
+    await runtime.sync()
+    runtime.acls.reconcile.reset_mock()
+    await runtime.sync()
+    runtime.acls.reconcile.assert_not_awaited()
+    await runtime.sync()
+    assert runtime.acls.reconcile.await_count == 2
+    assert runtime.acls.reconcile.await_args_list[0].args == (client, after)
+    assert runtime.acls.reconcile.await_args_list[0].kwargs == {"prune": False}
+    assert runtime.acls.reconcile.await_args_list[1].args == (client, after)
+    assert runtime.acls.reconcile.await_args_list[1].kwargs == {"prune": True}
+    runtime.transfer.assert_not_awaited()

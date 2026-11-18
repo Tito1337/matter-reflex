@@ -172,6 +172,9 @@ async def test_cover_compile_checks_real_registry_and_acl(
         return SimpleNamespace(
             endpoint_id=index,
             get_cluster=clusters.get,
+            has_attribute=lambda cluster, attribute: (
+                (cluster, attribute) == (0x102, 0xFFF9)
+            ),
             get_attribute_value=lambda cluster, attribute: (
                 accepted if (cluster, attribute) == (0x102, 0xFFF9) else None
             ),

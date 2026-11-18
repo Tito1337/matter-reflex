@@ -47,7 +47,9 @@ async def compile_plug(
     if product is None:
         del attrs["0/40/3"]
     if has_onoff:
-        attrs.update({"1/6/0": True, "1/6/65529": list(commands)})
+        attrs["1/6/0"] = True
+        if commands is not None:
+            attrs["1/6/65529"] = list(commands)
     target = node(42, attrs)
     client = SimpleNamespace(server_info=object(), get_nodes=lambda: [source, target])
     runtime = SimpleNamespace(adapter=SimpleNamespace(matter_client=client))
@@ -149,6 +151,7 @@ async def test_outlet_absolute_wire_and_onoff_only_acl(
         {"category": "diagnostic"},
         {"product": "Matter Reflex", "vendor": VENDOR},
         {"product": None, "reflex_node": 42},
+        {"commands": ()},  # a reported empty list is an unsupported action
         {"commands": (0, 2)},  # native Toggle alone cannot synthesize both absolutes
         {"has_onoff": False},
         {"service": "turn_on", "data": {"brightness": 12}},
@@ -168,3 +171,9 @@ async def test_unrelated_outlet_with_incomplete_basic_information(monkeypatch):
     result = await compile_plug(monkeypatch, product=None)
     assert result.permissions[42] == {(1, 6, 3)}
     assert not result.issues
+
+
+@pytest.mark.asyncio
+async def test_missing_command_report_does_not_compile_an_empty_image(monkeypatch):
+    with pytest.raises(RuntimeError, match="Waiting for the Matter commands"):
+        await compile_plug(monkeypatch, commands=None)

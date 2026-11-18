@@ -54,6 +54,14 @@ class Runtime:
         self.target_hash = None
         self.last_sync = None
         self.acl_synced = False
+        self.synced_permissions = None
+
+    @property
+    def rules_synchronized(self) -> bool | None:
+        """Return whether the device and ACLs match the compiled rules."""
+        if self.status is None:
+            return None
+        return self.acl_synced and self.status["hash"] == self.target_hash
 
     def client(self):
         return client_for(
@@ -228,7 +236,11 @@ class Runtime:
             if domain == DOMAIN and key.startswith(prefix) and key not in current:
                 ir.async_delete_issue(self.hass, DOMAIN, key)
         expected = digest(compiled.image)
-        previously_verified = self.acl_synced and self.target_hash == expected
+        previously_verified = (
+            self.acl_synced
+            and self.target_hash == expected
+            and self.synced_permissions == compiled.permissions
+        )
         self.target_hash = expected
         observed = await self.read_status(client)
         if (
@@ -248,5 +260,6 @@ class Runtime:
         await self.acls.reconcile(client, compiled.permissions, prune=True)
         self.status = observed
         self.last_sync = datetime.now(UTC)
+        self.synced_permissions = compiled.permissions
         self.acl_synced = True
         self.clear_issue("sync")

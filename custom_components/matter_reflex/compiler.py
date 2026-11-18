@@ -266,6 +266,15 @@ async def async_compile(
 
     dimmable = set()
 
+    def accepted_commands(endpoint, cluster, entity_id):
+        attribute = 0xFFF9  # AcceptedCommandList
+        # The CHIP class exposes an empty default before this path is read.
+        if endpoint.has_attribute(cluster, attribute):
+            commands = endpoint.get_attribute_value(cluster, attribute)
+            if isinstance(commands, list):
+                return commands
+        raise RuntimeError(f"Waiting for the Matter commands of {entity_id}")
+
     def lookup(entity_id):
         reg = registry.async_get(entity_id)
         if (
@@ -318,9 +327,7 @@ async def async_compile(
                 or CLUSTER in (attrs.get(f"{ENDPOINT}/29/1") or [])
             ):
                 raise ValueError("The Reflex lease endpoint cannot be a rule target")
-            commands = ep.get_attribute_value(6, 0xFFF9)
-            if commands is None:
-                raise RuntimeError(f"Waiting for the OnOff commands of {entity_id}")
+            commands = accepted_commands(ep, 6, entity_id)
             # A toggle is resolved to absolute On or Off by the firmware.
             plug_ops = {op for op in (0, 1) if op in commands}
             if plug_ops == {0, 1}:
@@ -328,15 +335,13 @@ async def async_compile(
             return Endpoint(node.node_id, ep.endpoint_id, plug_ops=frozenset(plug_ops))
         state = hass.states.get(entity_id)
         if domain == "cover":
-            commands = ep.get_attribute_value(
-                WINDOW_COVERING, 0xFFF9
-            )  # AcceptedCommandList
+            commands = accepted_commands(ep, WINDOW_COVERING, entity_id)
             features = (
                 state.attributes.get("supported_features", reg.supported_features)
                 if state
                 else reg.supported_features
             )
-            if features is None or commands is None:
+            if features is None:
                 raise RuntimeError(f"Waiting for cover capabilities of {entity_id}")
             return Endpoint(
                 node.node_id,

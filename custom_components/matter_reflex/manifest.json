@@ -1,14 +1,17 @@
 {
   "domain": "matter_reflex",
   "name": "Matter Reflex",
-  "version": "0.3.0",
+  "codeowners": [
+    "@Tito1337"
+  ],
+  "config_flow": true,
   "dependencies": [
     "matter",
     "automation"
   ],
-  "codeowners": [],
-  "config_flow": true,
-  "documentation": "https://github.com/search?q=matter-reflex&type=repositories",
+  "documentation": "https://github.com/Tito1337/matter-reflex#readme",
+  "integration_type": "device",
   "iot_class": "local_polling",
-  "integration_type": "device"
+  "issue_tracker": "https://github.com/Tito1337/matter-reflex/issues",
+  "version": "0.3.1"
 }

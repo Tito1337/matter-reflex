@@ -19,8 +19,6 @@ class ReflexBinarySensor(ReflexEntity, BinarySensorEntity):
     @property
     def is_on(self):
         runtime = self.runtime
-        if not runtime.status:
-            return None
         if self.key == "active":
-            return runtime.status["active"]
-        return runtime.acl_synced and runtime.status["hash"] == runtime.target_hash
+            return runtime.status["active"] if runtime.status is not None else None
+        return runtime.rules_synchronized
