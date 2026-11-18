@@ -6,7 +6,7 @@ idf_image=docker.io/espressif/idf:v5.5.4
 matter_image=docker.io/espressif/esp-matter@sha256:c4634244a189eebd315de90bf2719310d1de78da833952e3dcb61c384bebab24
 ha_image=localhost/matter-reflex-ha:2026.11.1
 podman_cmd=(podman --cgroup-manager=cgroupfs)
-run=(run --rm -i --volume "$project:/work" --workdir /work)
+run=(run --rm -i --volume "$project:/work:z" --workdir /work)
 if [[ -t 0 && -t 1 ]]; then
     run+=(-t)
 fi
@@ -28,7 +28,7 @@ esac
 case "$mode" in
     factory)
         install -d -m 0700 "$private_board"
-        exec "${podman_cmd[@]}" "${run[@]}" --network none --volume "$private_board:/provision" "$matter_image" python /work/tools/factory.py /provision
+        exec "${podman_cmd[@]}" "${run[@]}" --network none --volume "$private_board:/provision:Z" "$matter_image" python /work/tools/factory.py /provision
         ;;
     matter)
         exec "${podman_cmd[@]}" "${run[@]}" --volume matter-reflex-idf-cache:/root/.cache "$matter_image" bash -c 'cd /work && exec "$@"' bash "$@"
@@ -38,16 +38,20 @@ case "$mode" in
         ;;
     usb|matter-usb)
         if [[ ! -c "$board" || ! -r "$board" || ! -w "$board" ]]; then
-            echo "Carte absente ou accès série insuffisant. Voir README.md." >&2
+            echo "Carte absente ou accès série insuffisant. Voir firmware/README.md." >&2
             exit 1
         fi
         if [[ $mode == matter-usb ]]; then
             idf_image=$matter_image
             if [[ -d "$private_board/factory" ]]; then
-                run+=(--volume "$private_board/factory:/factory:ro")
+                run+=(--volume "$private_board/factory:/factory:ro,Z")
             fi
         fi
         device=$(readlink -f -- "$board")
+        # Rootless crun can retain dialout (or the distribution’s serial group).
+        if [[ $("${podman_cmd[@]}" info --format '{{.Host.OCIRuntime.Name}}') == crun ]]; then
+            run+=(--group-add keep-groups)
+        fi
         exec "${podman_cmd[@]}" "${run[@]}" --device "$device" --env "ESPPORT=$device" --env "ESPTOOL_PORT=$device" "$idf_image" bash -c 'cd /work && exec "$@"' bash "$@"
         ;;
     ha)

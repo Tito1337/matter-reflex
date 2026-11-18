@@ -1,5 +1,6 @@
 """Send a bounded command to the XIAO console. Secrets arrive only on stdin."""
 import argparse
+import getpass
 import json
 import os
 import re
@@ -16,13 +17,20 @@ def main():
     args = parser.parse_args()
     message = args.command
     if message == "dataset":
-        reply = json.load(sys.stdin)
-        value = reply.get("result", {}).get("tlv", "")
-        if reply.get("success") is not True or not re.fullmatch(r"(?:[\da-fA-F]{2}){1,254}", value):
+        value = (getpass.getpass("Dataset Thread hexadécimal : ")
+                 if sys.stdin.isatty() else sys.stdin.read(8192)).strip()
+        if value.startswith("{"):
+            try:
+                reply = json.loads(value)
+                value = reply["result"]["tlv"] if reply["success"] is True else ""
+            except (ValueError, KeyError, TypeError):
+                raise SystemExit("Invalid dataset response") from None
+        if not isinstance(value, str) or not re.fullmatch(r"(?:[0-9a-fA-F]{2}){1,254}", value):
             raise SystemExit("Invalid dataset response")
         message += " " + value
     elif message == "key":
-        value = sys.stdin.readline().strip()
+        value = (getpass.getpass("Clé de transfert hexadécimale : ")
+                 if sys.stdin.isatty() else sys.stdin.readline()).strip()
         if not re.fullmatch(r"[\da-fA-F]{64}", value):
             raise SystemExit("Invalid provisioning key")
         message += " " + value
@@ -64,10 +72,10 @@ def main():
                     os.write(fd, (message + "\n").encode("ascii"))
                     sent = True
                 continue
-            if line == "REFLEX OK":
+            if sent and line == "REFLEX OK":
                 print("REFLEX OK")
                 return
-            if line == "REFLEX ERROR":
+            if sent and line == "REFLEX ERROR":
                 raise SystemExit("Command rejected by the board")
     finally:
         os.close(fd)

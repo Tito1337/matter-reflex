@@ -44,8 +44,8 @@ Pour une autre carte ou pour une copie du projet obtenue sans Git, définis `MAT
 ./dev factory
 ```
 
-Cette commande génère une identité d’appairage dédiée à la carte détectée
-lors de la préparation du projet. Elle utilise le générateur officiel de CHIP
+Cette commande génère une identité d’appairage dédiée à la carte sélectionnée
+via son identifiant USB. Elle utilise le générateur officiel de CHIP
 et conserve le même code aux exécutions suivantes. Le fichier privé
 `onboarding_codes.csv` contient le QR Matter et le code manuel de l’instance.
 La partition `factory_partition.bin` contient le vérificateur SPAKE2+.
@@ -65,15 +65,21 @@ entiers** dans un emplacement privé. La nouvelle table de partitions attribue
 les zones de flash à Matter Reflex. Le port est résolu par identifiant USB par
 `./dev matter-usb`.
 
+Pour créer la sauvegarde depuis la racine du clone, ces commandes placent une
+copie complète dans un dossier privé ignoré par Git et vérifient sa longueur.
+
+```sh
+./dev usb bash -ec 'umask 077; mkdir -p private; dir=$(mktemp -d private/xiao.XXXXXX); python -m esptool --chip esp32c6 -p "$ESPPORT" read_flash 0 0x400000 "$dir/flash.bin" && test "$(wc -c < "$dir/flash.bin")" -eq 4194304 && echo "$dir/flash.bin"'
+```
+
 1. Écrire le chargeur, la table et le firmware.
 2. Écrire les données usine générées pour cette carte dans la partition
    `fctry`, localisée par son nom dans la table sur la carte.
-3. Ouvrir la console pour provisionner le dataset Thread.
+3. Provisionner le dataset avec le lecteur série de la section suivante.
 
 ```sh
 ./dev matter-usb idf.py -C firmware flash
 ./dev matter-usb bash -c 'python "$IDF_PATH/components/partition_table/parttool.py" --port "$ESPPORT" --partition-table-offset 0xc000 write_partition --partition-name fctry --input /factory/factory_partition.bin'
-./dev matter-usb idf.py -C firmware monitor
 ```
 
 Pour les mises à jour du même profil de partitions, utiliser
@@ -85,33 +91,77 @@ Pour revenir du firmware 1.1 au 1.0 après utilisation de règles de store, reti
 leur label `reflex` et attendre que HA confirme la synchronisation avant le flash.
 Le firmware 1.0 ne peut charger qu’une image contenant exclusivement des règles lumière.
 
-## Console et mise en service sur Thread
+## Rattacher le XIAO à Thread
 
-`./dev usb python /work/tools/board_console.py status` affiche le rattachement
-Thread, le nombre de fabrics, le node ID, le mode reflex, l’empreinte des règles
-et le compteur. Le lecteur ouvre le terminal sans manipuler RTS/DTR.
+Ouvre **Paramètres → Appareils et services → Thread → Configurer** avec un
+compte administrateur. Vérifie que le réseau est celui des télécommandes. Si
+Home Assistant n’a pas ses identifiants, importe-les depuis le téléphone qui
+connaît le réseau. [Gestion des identifiants Thread](https://www.home-assistant.io/integrations/thread/)
 
-Le firmware comprend les commandes série `dataset <TLV hex>`, `pair`,
-`key <64 hex>` et `status`. L’outil `board_console.py dataset` reçoit sur son
-entrée standard la réponse JSON de la commande WebSocket officielle
-`thread/get_dataset_tlv`. Il transmet le dataset au XIAO sans l’afficher.
-La carte le valide, le conserve avec OpenThread et ouvre une fenêtre de
-commissionnement réseau. La commande `pair` rouvre la fenêtre avant le premier
-appairage. Dans HA, `matter/commission` avec `network_only: true` et le code
-QR usine utilise le réseau Thread existant. Le profil livré utilise ce mode
-de commissionnement. Le port BLE est désactivé.
+Si la fiche du réseau affiche les TLV du dataset actif, copie-les. Pour les
+routeurs de bordure externes, tu peux aussi les obtenir via le WebSocket de
+ta session HA. Depuis la console développeur de ton navigateur, sur la page
+HA, exécute la première commande pour choisir un réseau :
 
-Pour charger le dataset, enregistre la réponse WebSocket authentifiée dans un fichier privé et passe-la par l’entrée standard. Remplace le chemin dans cet exemple.
-
-```sh
-./dev usb python /work/tools/board_console.py dataset < /chemin/prive/reponse-thread.json
+```js
+const ha = document.querySelector("home-assistant").hass
+const { datasets } = await ha.callWS({ type: "thread/list_datasets" })
+console.table(datasets.map(({ network_name, dataset_id, preferred }) => ({ network_name, dataset_id, preferred })))
 ```
 
-Lorsque le formulaire de configuration le demande, générer une clé aléatoire de 32 octets
-dans un fichier privé hors dépôt, la transmettre en hexadécimal à
-`./dev usb python /work/tools/board_console.py key` par l’entrée standard
-et fournir la même clé au formulaire HA. Le premier statut authentifié lie
-cette clé au nœud et à sa fabric.
+La commande suivante présente le TLV dans une boîte de dialogue pour le
+copier. Le dataset contient la clé d’accès à ton réseau Thread.
+
+```js
+const dataset_id = prompt("Identifiant du réseau choisi dans le tableau")
+if (dataset_id) {
+  const { tlv } = await ha.callWS({ type: "thread/get_dataset_tlv", dataset_id })
+  void prompt("Copie ce dataset dans la saisie masquée du terminal.", tlv)
+}
+```
+
+Dans un terminal, colle le TLV à l’invite masquée, puis vérifie le rattachement :
+
+```sh
+./dev usb python /work/tools/board_console.py dataset
+./dev usb python /work/tools/board_console.py status
+```
+
+Le lecteur accepte aussi la réponse WebSocket JSON complète par redirection
+depuis un fichier privé. Le XIAO conserve le dataset et ouvre une fenêtre de
+commissionnement de 15 minutes. Attends que `status` affiche `thread=attached`.
+Si la fenêtre expire, `./dev usb python /work/tools/board_console.py pair`
+en ouvre une autre avant le premier appairage.
+
+## Appairer avec Home Assistant
+
+Dans la console du navigateur sur HA, lance cette commande. À l’invite,
+colle la valeur de la colonne `qrcode` de ton fichier privé
+`onboarding_codes.csv` (la valeur commence par `MT:`).
+
+```js
+const pairingCode = prompt("Code QR Matter du XIAO")
+if (pairingCode) {
+  await document.querySelector("home-assistant").hass.callWS({
+    type: "matter/commission", code: pairingCode, network_only: true
+  })
+}
+```
+
+Vérifie que **Matter Reflex** apparaît dans l’intégration Matter et que la
+commande série `status` indique `fabrics=1` et un node ID. Ferme la console
+du navigateur après l’opération. Le profil fourni utilise Thread pour ce
+commissionnement. [Client WebSocket de Home Assistant](https://developers.home-assistant.io/docs/api/websocket/)
+
+Lorsque le formulaire Matter Reflex demande la clé de transfert, crée dans
+ton gestionnaire de mots de passe une valeur aléatoire de **64 chiffres
+hexadécimaux** (32 octets). Transmets la même valeur à l’invite masquée
+suivante puis au formulaire. Le premier statut authentifié lie la clé au
+nœud et à sa fabric.
+
+```sh
+./dev usb python /work/tools/board_console.py key
+```
 
 Le bail standard arrive sur l’endpoint 2 (On/Off Plug-in Unit logique).
 Une commande CASE `OnWithTimedOff` d’administration autorise HA à inhiber
