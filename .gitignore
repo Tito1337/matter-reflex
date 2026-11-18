@@ -1,0 +1,13 @@
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+
+# Provisionnement et sauvegardes locaux
+/private/
+.storage/
+secrets.yaml
+factory_partition.bin
+onboarding_codes.csv
+nvs_partition.csv
+.env

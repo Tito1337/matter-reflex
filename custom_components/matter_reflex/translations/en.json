@@ -1,0 +1,58 @@
+{
+  "title": "Matter Reflex",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect Matter Reflex",
+        "description": "Select the commissioned board. Home Assistant checks whether the Matter server can transfer rules.",
+        "data": {
+          "node": "Matter node"
+        }
+      },
+      "fallback": {
+        "title": "Set up rules transfer over Thread",
+        "description": "This Matter server cannot transfer the manufacturer’s rules. Enter the 64-character hexadecimal key provisioned over USB to authenticate the fallback channel. The lease uses the standard Matter command.",
+        "data": {
+          "key": "Thread channel key"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Authentication failed. Check the USB-provisioned key and Thread IPv6 connectivity.",
+      "invalid_input": "Invalid selection or key.",
+      "matter_unavailable": "Cannot reach the node over Matter. Check its availability and retry."
+    },
+    "abort": {
+      "no_nodes": "No commissioned Matter Reflex node found on the fabric.",
+      "already_configured": "This node is already configured."
+    }
+  },
+  "issues": {
+    "rule": {
+      "title": "Unsupported Reflex automation",
+      "description": "{detail}"
+    },
+    "sync": {
+      "title": "Matter Reflex synchronization failed",
+      "description": "{detail}"
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "active": {
+        "name": "Active"
+      },
+      "synced": {
+        "name": "Synchronized"
+      }
+    },
+    "sensor": {
+      "executions": {
+        "name": "Executions"
+      },
+      "last_sync": {
+        "name": "Last synchronization"
+      }
+    }
+  }
+}

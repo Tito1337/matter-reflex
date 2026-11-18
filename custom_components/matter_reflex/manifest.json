@@ -1,0 +1,14 @@
+{
+  "domain": "matter_reflex",
+  "name": "Matter Reflex",
+  "version": "0.3.0",
+  "dependencies": [
+    "matter",
+    "automation"
+  ],
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/search?q=matter-reflex&type=repositories",
+  "iot_class": "local_polling",
+  "integration_type": "device"
+}

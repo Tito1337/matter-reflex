@@ -1,0 +1,58 @@
+{
+  "title": "Matter Reflex",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Associer Matter Reflex",
+        "description": "Sélectionnez la carte déjà commissionnée. Home Assistant vérifie si le serveur Matter peut transférer les règles.",
+        "data": {
+          "node": "Nœud Matter"
+        }
+      },
+      "fallback": {
+        "title": "Configurer le transfert des règles sur Thread",
+        "description": "Ce serveur Matter ne permet pas le transfert des règles du fabricant. Saisissez la clé de 64 caractères hexadécimaux provisionnée par USB pour authentifier le canal de repli. Le bail utilise la commande Matter standard.",
+        "data": {
+          "key": "Clé du canal Thread"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Échec de l’authentification. Vérifiez la clé USB et la connectivité IPv6 Thread.",
+      "invalid_input": "Sélection ou clé incorrecte.",
+      "matter_unavailable": "Impossible de joindre le nœud via Matter. Vérifiez sa disponibilité et réessayez."
+    },
+    "abort": {
+      "no_nodes": "Aucun nœud Matter Reflex commissionné sur la fabric.",
+      "already_configured": "Ce nœud est déjà configuré."
+    }
+  },
+  "issues": {
+    "rule": {
+      "title": "Automatisation Reflex incompatible",
+      "description": "{detail}"
+    },
+    "sync": {
+      "title": "Échec de la synchronisation Matter Reflex",
+      "description": "{detail}"
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "active": {
+        "name": "Mode reflex actif"
+      },
+      "synced": {
+        "name": "Synchronisé"
+      }
+    },
+    "sensor": {
+      "executions": {
+        "name": "Exécutions"
+      },
+      "last_sync": {
+        "name": "Dernière synchronisation"
+      }
+    }
+  }
+}

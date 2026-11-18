@@ -1,0 +1,21 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <esp_matter.h>
+#include "reflex_engine.h"
+
+// Call on the Matter event loop or with the CHIP stack lock held.
+namespace reflex_runtime {
+bool lease(uint16_t seconds);
+bool replace_image(const uint8_t *data, size_t size);
+bool transfer(const char *frame, size_t length);
+const char *rules_hash();
+bool active();
+uint32_t executions();
+uint64_t self_node();
+uint64_t fabric_id();
+void create_cluster(esp_matter::endpoint_t *ep);
+void start();
+void command_result(uint32_t rule, uint64_t event, uint16_t status);
+} // namespace reflex_runtime
