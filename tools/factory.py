@@ -5,11 +5,11 @@ import contextlib
 import fcntl
 import logging
 import os
-from pathlib import Path
 import runpy
 import secrets
 import sys
 import tempfile
+from pathlib import Path
 
 
 def generate(parent: Path) -> None:
@@ -24,8 +24,8 @@ def generate(parent: Path) -> None:
         if target.exists():
             if not all((target / name).is_file()
                        for name in ("factory_partition.bin", "onboarding_codes.csv")):
-                raise RuntimeError("Dossier de provisionnement incomplet.")
-            print("Les données d’usine existantes sont disponibles.")
+                raise RuntimeError("The provisioning directory is incomplete.")
+            print("Using the existing factory data.")
             return
 
         forbidden = {11_111_111 * n for n in range(10)} | {12_345_678, 87_654_321}
@@ -50,12 +50,12 @@ def generate(parent: Path) -> None:
             with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
                 runpy.run_path(str(generator), run_name="__main__")
             if (output / "factory_partition.bin").stat().st_size != 0x6000:
-                raise ValueError("Taille inattendue de la partition usine.")
+                raise ValueError("Unexpected factory partition size.")
             if not (output / "onboarding_codes.csv").is_file():
-                raise ValueError("Le SDK n’a pas produit le code d’appairage.")
+                raise ValueError("The SDK did not generate a pairing code.")
             (output / "nvs_partition.csv").unlink()
             output.rename(target)
-        print("Partition usine et codes d’appairage générés.")
+        print("Generated the factory partition and pairing codes.")
     finally:
         os.close(directory)
 

@@ -3,7 +3,7 @@ __pycache__/
 .ruff_cache/
 *.py[cod]
 
-# Provisionnement et sauvegardes locaux
+# Local provisioning files and backups
 /private/
 .storage/
 secrets.yaml

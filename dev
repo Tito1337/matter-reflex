@@ -17,7 +17,7 @@ case "$mode" in
     factory|usb|matter-usb)
         board=${MATTER_REFLEX_BOARD:-$(git -C "$project" config --local --get matter-reflex.board 2>/dev/null || true)}
         if [[ -z "$board" || "$board" != /dev/serial/by-id/* || ! -L "$board" ]]; then
-            echo "Sélectionner la carte dans /dev/serial/by-id/ avec MATTER_REFLEX_BOARD ou git config --local matter-reflex.board. Voir firmware/README.md." >&2
+            echo "Select a board in /dev/serial/by-id/ using MATTER_REFLEX_BOARD or git config --local matter-reflex.board. See firmware/README.md." >&2
             exit 1
         fi
         board_name=${board##*/}
@@ -38,7 +38,7 @@ case "$mode" in
         ;;
     usb|matter-usb)
         if [[ ! -c "$board" || ! -r "$board" || ! -w "$board" ]]; then
-            echo "Carte absente ou accès série insuffisant. Voir firmware/README.md." >&2
+            echo "Board unavailable. Check the USB connection and serial port permissions. See firmware/README.md." >&2
             exit 1
         fi
         if [[ $mode == matter-usb ]]; then
@@ -58,7 +58,7 @@ case "$mode" in
         exec "${podman_cmd[@]}" "${run[@]}" --network none --entrypoint "" "$ha_image" "$@"
         ;;
     *)
-        echo "Usage : ./dev {matter|matter-usb|factory|idf|usb|ha} commande [arguments...]" >&2
+        echo "Usage: ./dev {matter|matter-usb|factory|idf|usb|ha} command [arguments...]" >&2
         exit 2
         ;;
 esac

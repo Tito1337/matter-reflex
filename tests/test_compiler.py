@@ -63,7 +63,7 @@ def test_brightness(data, expected):
     "change",
     [
         {"conditions": [{"condition": "sun"}]},
-        {"actions": [{"action": "light.turn_off", "target": {"area_id": "chambre"}}]},
+        {"actions": [{"action": "light.turn_off", "target": {"area_id": "bedroom"}}]},
         {"triggers": [{"trigger": "state", "entity_id": "event.remote_button"}]},
         {"variables": {"x": 1}},
     ],
@@ -96,7 +96,7 @@ def test_cover_wire_keeps_ha_position(service, data, op, value):
     config["actions"] = [
         {
             "action": f"cover.{service}",
-            "target": {"entity_id": "cover.store"},
+            "target": {"entity_id": "cover.shade"},
             "data": data,
         }
     ]
@@ -104,11 +104,11 @@ def test_cover_wire_keeps_ha_position(service, data, op, value):
     def resolve(name):
         return (
             Endpoint(42, 7, cover_ops=frozenset({op}))
-            if name == "cover.store"
+            if name == "cover.shade"
             else lookup(name)
         )
 
-    (rule,) = compile_automation("store", config, resolve)
+    (rule,) = compile_automation("shade", config, resolve)
     assert (
         rule.target,
         rule.target_ep,
@@ -138,11 +138,11 @@ def test_reject_invalid_cover_position(data):
         {
             "action": "cover.set_cover_position",
             "data": data,
-            "target": {"entity_id": "cover.store"},
+            "target": {"entity_id": "cover.shade"},
         }
     ]
     with pytest.raises(ValueError):
-        compile_automation("store", config, lookup)
+        compile_automation("shade", config, lookup)
 
 
 @pytest.mark.asyncio
@@ -195,8 +195,8 @@ async def test_cover_compile_checks_real_registry_and_acl(
 
     src, target, auto = (
         registered("event", "remote_button", "ref-2-remote-59-0"),
-        registered("cover", "store", "ref-7-cover-258-0"),
-        registered("automation", "store", "a"),
+        registered("cover", "shade", "ref-7-cover-258-0"),
+        registered("automation", "shade", "a"),
     )
     entries = {e.entity_id: e for e in (src, target, auto)}
     config = sample()
@@ -204,7 +204,7 @@ async def test_cover_compile_checks_real_registry_and_acl(
         {
             "action": "cover.set_cover_position",
             "data": {"position": 42},
-            "target": {"entity_id": "cover.store"},
+            "target": {"entity_id": "cover.shade"},
         }
     ]
     nodes = [

@@ -17,7 +17,7 @@ def main():
     args = parser.parse_args()
     message = args.command
     if message == "dataset":
-        value = (getpass.getpass("Dataset Thread hexadécimal : ")
+        value = (getpass.getpass("Thread dataset (hex): ")
                  if sys.stdin.isatty() else sys.stdin.read(8192)).strip()
         if value.startswith("{"):
             try:
@@ -29,7 +29,7 @@ def main():
             raise SystemExit("Invalid dataset response")
         message += " " + value
     elif message == "key":
-        value = (getpass.getpass("Clé de transfert hexadécimale : ")
+        value = (getpass.getpass("Rule transfer key (hex): ")
                  if sys.stdin.isatty() else sys.stdin.readline()).strip()
         if not re.fullmatch(r"[\da-fA-F]{64}", value):
             raise SystemExit("Invalid provisioning key")

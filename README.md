@@ -1,79 +1,77 @@
 # Matter Reflex
 
-[English quick start](docs/quickstart.en.md) · [Dépannage](docs/depannage.md) · [Contribuer](CONTRIBUTING.md)
+Keep a Matter button working when Home Assistant or its Matter Server goes offline. Matter Reflex pairs a Home Assistant integration with a **Seeed Studio XIAO ESP32-C6** on your Thread network. Add the `reflex` label to a supported automation and the board stores its rules. If Home Assistant stops renewing a ten-second lease, the board can send commands directly to your lights, plugs and shades.
 
-Une télécommande peut continuer à commander une lampe, une prise ou un store pendant une panne de Home Assistant ou de son serveur Matter. Matter Reflex associe une intégration Home Assistant à un **Seeed Studio XIAO ESP32-C6** sur le réseau Thread. Tu écris l’automatisation dans HA et tu lui donnes le label `reflex`. Le XIAO en conserve les règles et prend le relais après expiration d’un bail de dix secondes.
+[Quick start](docs/quickstart.en.md) · [Firmware setup](firmware/README.md) · [Troubleshooting](docs/troubleshooting.md) · [Contributing](CONTRIBUTING.md)
 
-## Un premier raccourci
+## Your first automation
 
-Cet exemple allume une lampe à 70 % sur un double appui. Dans l’éditeur YAML d’une automatisation HA, remplace les deux entités par celles de ta télécommande et de ta lampe. Vérifie que le bouton annonce `multi_press_2` parmi ses types d’événements.
+This example turns on a reading lamp at 70% brightness when you double-press a button. Open the YAML editor for a Home Assistant automation and replace the two entity IDs with your own. The button must advertise `multi_press_2` among its event types.
 
 ```yaml
-alias: Double appui pour lire
+alias: Double-press for reading light
 triggers:
   - trigger: event.received
     target:
-      entity_id: event.bouton_lecture
+      entity_id: event.reading_button
     options:
       event_type: [multi_press_2]
 actions:
   - action: light.turn_on
     target:
-      entity_id: light.lampe_lecture
+      entity_id: light.reading_lamp
     data:
       brightness_pct: 70
 mode: single
 ```
 
-Après installation, ajoute le label **reflex** à l’automatisation activée. Vérifie le capteur **Synchronisé** et la page **Réparations**. Le capteur confirme le transfert de la table acceptée. Une automatisation incompatible est signalée individuellement dans Réparations.
+After installing Reflex, enable the automation and give it the **reflex** label. Check **Synchronized** to confirm that the board received the accepted rules. Then check **Settings → System → Repairs** to see whether Reflex excluded any automations.
 
-## Compatibilité
+## Supported actions
 
-Le déclencheur est un événement de bouton Matter (`event.received`). Chaque cible est une entité explicite de la même fabric Matter, le domaine de confiance dans lequel HA a appairé les appareils.
+Use a Matter button event (`event.received`) as the trigger. Specify each target by entity ID. The button, board and targets must belong to the same Matter fabric, the trust domain where Home Assistant commissioned them.
 
-| Destination | Actions prises en charge |
+| Target | Supported actions |
 | --- | --- |
-| Lumière | `light.turn_on`, `light.turn_off`, `light.toggle`. À l’allumage, fixer la luminosité ou la modifier par pas, en unités HA ou en pourcentage entier. |
-| Prise | `switch.turn_on`, `switch.turn_off`, `switch.toggle` sur la sortie d’une prise Matter. |
-| Store | `cover.open_cover`, `cover.close_cover`, `cover.stop_cover`, `cover.set_cover_position`, selon les capacités annoncées. La position HA va de 0 (fermé) à 100 (ouvert). |
+| Light | `light.turn_on`, `light.turn_off`, `light.toggle`. When turning on a dimmable light, set the brightness or adjust it by a step, using Home Assistant brightness units or a whole-number percentage. |
+| Smart plug | `switch.turn_on`, `switch.turn_off`, `switch.toggle` on the plug's power outlet. |
+| Shade | `cover.open_cover`, `cover.close_cover`, `cover.stop_cover`, `cover.set_cover_position`, depending on the commands the device advertises. Home Assistant measures position from 0 (closed) to 100 (open). |
 
-La table contient jusqu’à **32 associations**. Un geste qui commande trois appareils en utilise trois. Une bascule exige que le XIAO ait reçu l’état marche/arrêt de la cible. Les conditions, temporisations, cibles par pièce, branches `choose`, blocs `parallel`, couleurs et transitions restent du ressort de HA. Pour deux actions indépendantes sur un appui long, on peut créer deux automatisations ayant le même déclencheur.
+The board stores up to **32 gesture–target pairs**. A gesture that controls three devices uses three entries. A toggle requires the board to have received the target's on/off state. Conditions, delays, area targets, `choose` branches, `parallel` blocks, colors and transitions require Home Assistant. To run two independent actions on a long press, you can give two automations the same trigger.
 
 ## Installation
 
-1. Prépare HA avec Matter, un réseau Thread opérationnel, son routeur de bordure, un XIAO ESP32-C6 et un câble USB de données. Le parcours de compilation utilise Linux et Podman rootless.
-2. Suis le [guide du firmware](firmware/README.md) pour compiler, provisionner et appairer le XIAO sur la fabric Matter de HA. Le profil fourni utilise l’attestation de développement du SDK.
-3. Copie [custom_components/matter_reflex](custom_components/matter_reflex) dans `config/custom_components/` sur HA. Vérifie la configuration, redémarre Core puis ajoute **Matter Reflex** dans **Paramètres → Appareils et services**. Sélectionne le XIAO. Si le formulaire demande la clé de transfert, utilise celle provisionnée sur la carte.
-4. Essaie le raccourci ci-dessus. En fonctionnement normal, **Synchronisé** est actif et **Mode reflex actif** est éteint. HA commande la lampe.
+1. Prepare Home Assistant with Matter, a working Thread network and border router, a XIAO ESP32-C6 and a USB data cable. The build instructions use Linux with rootless Podman.
+2. Build and provision the firmware, then commission the XIAO onto Home Assistant's Matter fabric. The supplied profile uses the SDK's development attestation credentials. [Firmware guide](firmware/README.md)
+3. Copy the [matter_reflex integration directory](custom_components/matter_reflex) into `config/custom_components/`. Check your Home Assistant configuration and restart Core. Under **Settings → Devices & services**, add **Matter Reflex** and select your board. If prompted for the transfer key, enter the one you provisioned on the board.
+4. Try the double press above. During normal operation, **Synchronized** is on, **Active** is off, and Home Assistant controls the lamp.
 
-## Fonctionnement du relais
+## How failover works
 
-- **Quand HA répond**, l’intégration renouvelle le bail toutes les 2,5 secondes sur l’endpoint 2 avec la commande Matter `OnWithTimedOff`. Le XIAO reste abonné aux événements des boutons et ignore les appuis pendant le bail.
-- **À l’expiration du bail**, le XIAO utilise ses sessions Matter pour envoyer directement les commandes aux cibles. Au retour de HA, le renouvellement du bail remet la carte en veille. Le compteur d’exécutions inclut les échecs. L’événement `RuleExecuted` porte le statut individuel.
-- **À la synchronisation**, HA compile les règles, accorde les droits nécessaires sur les endpoints et vérifie l’empreinte enregistrée par le XIAO en mémoire non volatile. Le transfert passe par le cluster de développement `0xFFF1FC00` sur l’endpoint 1 ou, si le serveur ne le prend pas en charge, par HTTP sur IPv6 Thread (port 5581), authentifié par HMAC-SHA256 avec défi à usage unique. Les commandes aux appareils passent par Matter dans les deux cas. Évite de modifier l’ACL du même appareil pendant sa synchronisation.
+- **While Home Assistant is available**, it renews the lease every 2.5 seconds by sending the Matter `OnWithTimedOff` command to endpoint 2. The XIAO stays subscribed to button events and ignores presses while the lease is valid.
+- **When the lease expires**, the XIAO uses its Matter sessions to send commands directly to the targets. The next lease renewal returns it to standby. The **Executions** counter includes failed commands. Each `RuleExecuted` event carries the individual result.
+- **When rules change**, Home Assistant compiles them, grants access to the required endpoints and verifies the fingerprint of the rule table saved in the board's nonvolatile memory. Home Assistant transfers the rules through development cluster `0xFFF1FC00` on endpoint 1. If Matter Server does not support that cluster, the integration uses HTTP over Thread IPv6 on port 5581, authenticated with HMAC-SHA256 and a single-use challenge. The board sends commands to the devices over Matter in either case. Avoid editing an endpoint's access control list during synchronization.
 
-Le bail porte sur la disponibilité du lien entre HA et le XIAO. Si HA renouvelle le bail alors qu’une automatisation particulière échoue, cette automatisation reste sous le contrôle de HA. Un geste reçu entre la panne et l’expiration du bail peut donc être perdu. Pendant la reprise, les deux contrôleurs peuvent observer le même geste. Le protocole ne garantit pas une exécution unique à cette frontière.
+The lease measures whether Home Assistant can reach the XIAO. If an individual automation fails while Home Assistant continues renewing the lease, Home Assistant still handles that automation. A press during the interval between an outage and lease expiry can be lost. During recovery, both controllers may see the same press, so a command can execute twice.
 
-## Essais sur matériel
+## Hardware tests
 
-Le XIAO ESP32-C6 a été testé avec le firmware 1.1.0, l’intégration 0.3.0, Home Assistant Core 2026.11.1 et Matter Server 9.3.0.
+The following observations come from a XIAO ESP32-C6 running firmware 1.1.0, integration 0.3.0, Home Assistant Core 2026.11.1 and Matter Server 9.3.0.
 
-| Essai | Observation |
+| Test | Observed result |
 | --- | --- |
-| BILRESA → KAJPLATS | Double appui et allumage à 70 % observés avec HA disponible, puis avec le serveur Matter arrêté. |
-| Six gestes d’une BILRESA | Serveur arrêté et intégration Matter suspendue, les six gestes ont commandé la prise GRILLPLATS, les deux lumières et le store Zemismart, y compris l’ouverture à 75 % et la fermeture. Neuf résultats ont été comptés pendant la séquence. Un dixième a été relevé à la reprise, sans attribution certaine. |
-| Redémarrage du XIAO et retour de HA | Rattachement à Thread, restauration de la table de règles, puis retour en veille après renouvellement du bail. |
+| BILRESA button and KAJPLATS light | A double press turned the light on at 70% with Home Assistant available and again with Matter Server stopped. |
+| Six gestures on one BILRESA | With Matter Server stopped and the Matter integration suspended, the six gestures controlled a GRILLPLATS plug, two lights and a Zemismart shade. The shade opened to 75% and closed. The counter recorded nine results during the sequence. A tenth appeared during recovery and could not be attributed to a particular gesture. |
+| XIAO restart and Home Assistant recovery | The board rejoined Thread, restored its rules and returned to standby when Home Assistant renewed the lease. |
 
-Pour reproduire un essai de panne, relève le compteur par USB et vérifie `active=1` avant l’appui. HA peut relancer automatiquement son serveur Matter. Utilise une cible observable et vérifie le retour à `active=0` après la reprise. La latence précise et le comportement après la perte simultanée du routeur de bordure et des sessions Matter restent à mesurer.
+To repeat an outage test, read the counter over USB and confirm `active=1` before pressing the button. Home Assistant can restart Matter Server automatically. Watch the physical target, then verify that the board reports `active=0` after recovery. Precise latency and behavior after simultaneous loss of the border router and Matter sessions still need measurement.
 
-## Développement
+## Development
 
-Le [guide de contribution](CONTRIBUTING.md) explique comment exécuter les tests Python, vérifier le contrat binaire avec le moteur C++ et construire l’image du XIAO depuis un clone neuf.
+The [contribution guide](CONTRIBUTING.md) covers the Python tests, the binary contract test with the C++ engine, and the target firmware build from a fresh clone. The [Home Assistant compiler](custom_components/matter_reflex/compiler.py) defines which automations Reflex accepts. The [firmware engine](firmware/main/reflex_engine.cpp) decodes those rules. The [tests](tests/) cover the shared format, Matter permissions and engine behavior.
 
-Le [compilateur HA](custom_components/matter_reflex/compiler.py) définit le sous-ensemble d’automatisations pris en charge. Le [moteur embarqué](firmware/main/reflex_engine.cpp) décode les règles. Les [tests](tests/) vérifient notamment le format partagé, les autorisations Matter et le comportement du moteur.
+## License and commercial contact
 
-## Licence et contact
+Matter Reflex is available under the [Mozilla Public License 2.0](LICENSE), which permits commercial use.
 
-Le code de Matter Reflex est distribué sous la [Mozilla Public License 2.0 (MPL-2.0)](LICENSE). La licence autorise l’utilisation commerciale.
-
-Si tu prépares un produit commercial qui intègre Reflex, j’aimerais que tu me contactes avant son lancement. Je serais heureux de savoir ce que tu construis. Tu peux [ouvrir une issue sur le dépôt du projet](https://github.com/Tito1337/matter-reflex/issues). Cette prise de contact est facultative.
+If you're building a commercial product with Reflex, I'd love to hear what you're making before you launch. You're welcome to [open an issue](https://github.com/Tito1337/matter-reflex/issues) to get in touch. Contact is optional.
