@@ -1,5 +1,7 @@
 # Matter Reflex
 
+[English quick start](docs/quickstart.en.md) · [Dépannage](docs/depannage.md) · [Contribuer](CONTRIBUTING.md)
+
 Une télécommande peut continuer à commander une lampe, une prise ou un store pendant une panne de Home Assistant ou de son serveur Matter. Matter Reflex associe une intégration Home Assistant à un **Seeed Studio XIAO ESP32-C6** sur le réseau Thread. Tu écris l’automatisation dans HA et tu lui donnes le label `reflex`. Le XIAO en conserve les règles et prend le relais après expiration d’un bail de dix secondes.
 
 ## Un premier raccourci
@@ -50,6 +52,8 @@ La table contient jusqu’à **32 associations**. Un geste qui commande trois ap
 - **À l’expiration du bail**, le XIAO utilise ses sessions Matter pour envoyer directement les commandes aux cibles. Au retour de HA, le renouvellement du bail remet la carte en veille. Le compteur d’exécutions inclut les échecs. L’événement `RuleExecuted` porte le statut individuel.
 - **À la synchronisation**, HA compile les règles, accorde les droits nécessaires sur les endpoints et vérifie l’empreinte enregistrée par le XIAO en mémoire non volatile. Le transfert passe par le cluster de développement `0xFFF1FC00` sur l’endpoint 1 ou, si le serveur ne le prend pas en charge, par HTTP sur IPv6 Thread (port 5581), authentifié par HMAC-SHA256 avec défi à usage unique. Les commandes aux appareils passent par Matter dans les deux cas. Évite de modifier l’ACL du même appareil pendant sa synchronisation.
 
+Le bail porte sur la disponibilité du lien entre HA et le XIAO. Si HA renouvelle le bail alors qu’une automatisation particulière échoue, cette automatisation reste sous le contrôle de HA. Un geste reçu entre la panne et l’expiration du bail peut donc être perdu. Pendant la reprise, les deux contrôleurs peuvent observer le même geste. Le protocole ne garantit pas une exécution unique à cette frontière.
+
 ## Essais sur matériel
 
 Le XIAO ESP32-C6 a été testé avec le firmware 1.1.0, l’intégration 0.3.0, Home Assistant Core 2026.11.1 et Matter Server 9.3.0.
@@ -64,15 +68,7 @@ Pour reproduire un essai de panne, relève le compteur par USB et vérifie `acti
 
 ## Développement
 
-Depuis la racine du dépôt, les commandes suivantes utilisent les conteneurs du projet.
-
-```sh
-podman --cgroup-manager=cgroupfs build -f tools/Containerfile.ha -t localhost/matter-reflex-ha:2026.11.1 tools
-./dev ha python -m pytest -q tests
-./dev ha ruff check custom_components/matter_reflex
-./dev idf bash -ec 'g++ -std=c++17 -Wall -Wextra -Werror firmware/main/reflex_engine.cpp tests/engine_test.cpp -o /tmp/engine && /tmp/engine'
-./dev matter idf.py -C firmware build
-```
+Le [guide de contribution](CONTRIBUTING.md) explique comment exécuter les tests Python, vérifier le contrat binaire avec le moteur C++ et construire l’image du XIAO depuis un clone neuf.
 
 Le [compilateur HA](custom_components/matter_reflex/compiler.py) définit le sous-ensemble d’automatisations pris en charge. Le [moteur embarqué](firmware/main/reflex_engine.cpp) décode les règles. Les [tests](tests/) vérifient notamment le format partagé, les autorisations Matter et le comportement du moteur.
 
@@ -80,4 +76,4 @@ Le [compilateur HA](custom_components/matter_reflex/compiler.py) définit le sou
 
 Le code de Matter Reflex est distribué sous la [Mozilla Public License 2.0 (MPL-2.0)](LICENSE). La licence autorise l’utilisation commerciale.
 
-Si tu prépares un produit commercial qui intègre Reflex, j’aimerais que tu me contactes avant son lancement. Je serais heureux de savoir ce que tu construis. Tu peux ouvrir une issue sur le dépôt du projet. Cette prise de contact est facultative.
+Si tu prépares un produit commercial qui intègre Reflex, j’aimerais que tu me contactes avant son lancement. Je serais heureux de savoir ce que tu construis. Tu peux [ouvrir une issue sur le dépôt du projet](https://github.com/Tito1337/matter-reflex/issues). Cette prise de contact est facultative.

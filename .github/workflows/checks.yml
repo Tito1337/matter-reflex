@@ -1,0 +1,25 @@
+name: Project checks
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  integration-and-engine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the Home Assistant test environment
+        run: podman --cgroup-manager=cgroupfs build -f tools/Containerfile.ha -t localhost/matter-reflex-ha:2026.11.1 tools
+      - name: Test the integration and lint Python
+        run: |
+          ./dev ha python -m pytest -q
+          ./dev ha ruff check custom_components/matter_reflex tests tools/board_console.py
+      - name: Decode and execute the integration's rules with the firmware engine
+        shell: bash
+        run: |
+          set -o pipefail
+          ./dev ha python - < tests/contract/encode.py | tools/test-engine

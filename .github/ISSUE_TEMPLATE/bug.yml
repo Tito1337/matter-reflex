@@ -1,0 +1,22 @@
+name: Report a bug
+description: Report an integration, firmware or installation problem.
+body:
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions and devices
+      description: Include the integration, firmware, Home Assistant Core and Matter Server versions you know. For a gesture, add the button and target models.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: What happened?
+      description: Give the steps, the expected result and what you observed on the device.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Additional observations
+      description: For an outage, include Reflex mode and the counter before and after the gesture. You can share the data section of the Reflex diagnostics or a minimal automation with renamed entities. Keep Thread datasets, pairing codes, keys, full diagnostics and flash dumps private.

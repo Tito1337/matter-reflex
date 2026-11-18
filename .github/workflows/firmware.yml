@@ -1,0 +1,28 @@
+name: ESP32-C6 firmware
+on:
+  workflow_dispatch:
+  push:
+    paths: ['firmware/**', 'dev', '.github/workflows/firmware.yml']
+  pull_request:
+    paths: ['firmware/**', 'dev', '.github/workflows/firmware.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Make room for the Espressif toolchain on the hosted runner
+        if: runner.environment == 'github-hosted'
+        run: |
+          available_kib=$(df -Pk "$GITHUB_WORKSPACE" | awk 'NR==2 {print $4}')
+          if (( available_kib < 28 * 1024 * 1024 )); then
+            sudo rm -rf -- /usr/local/lib/android/sdk
+          fi
+      - name: Compile and link the target firmware
+        run: ./dev matter idf.py -C firmware build
