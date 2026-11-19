@@ -1,0 +1,4 @@
+# Require encrypted uploads using the board's native API key.
+ota:
+  - platform: esphome
+    encryption:

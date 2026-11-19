@@ -1,0 +1,7 @@
+# USB migration for the standalone layout. See the commissioning-preserving procedure.
+packages:
+  board: !include xiao-esp32c6-managed.yaml
+  updates: !include ota.yaml
+
+esp32:
+  partitions: partitions-ota.csv

@@ -1,0 +1,12 @@
+# Fresh installation using ESPHome's standard two-slot partition layout.
+packages:
+  board: !include xiao-base.yaml
+  management: !include encrypted-api.yaml
+  updates: !include ota.yaml
+
+substitutions:
+  reflex_source: ../components
+  reflex_api_key: !secret reflex_api_key
+
+openthread:
+  tlv: !secret thread_tlv

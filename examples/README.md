@@ -1,4 +1,4 @@
-# ESPHome prototype for the XIAO ESP32-C6
+# Matter Reflex for the ESPHome XIAO ESP32-C6
 
 The [board configuration](xiao-esp32c6.yaml) uses ESPHome 2026.11.0 and pins the community Matter component to a Git revision. ESPHome owns Thread and commissioning. The local `matter_reflex` component registers endpoints 1 and 2, runs the shared firmware engine, and receives the four-second lease renewals through Matter Server. Home Assistant still compiles the labeled automations and grants the board access to the peers.
 
@@ -9,22 +9,24 @@ In your Device Builder configuration, import the released board package and set 
 ```yaml
 packages:
   reflex: github://Tito1337/matter-reflex/examples/xiao-base.yaml@esphome-v0.1.0
+  management: github://Tito1337/matter-reflex/examples/encrypted-api.yaml@esphome-v0.1.0
+  updates: github://Tito1337/matter-reflex/examples/ota.yaml@esphome-v0.1.0
+
+substitutions:
+  reflex_api_key: !secret reflex_api_key
 
 esphome:
   name: bureau-reflex
 
 openthread:
   tlv: !secret thread_tlv
-
-matter_reflex:
-  transfer_key: !secret reflex_transfer_key
 ```
 
 The tag selects the Reflex code and its tested Matter dependency. The checkout examples override the component source to build local changes.
 
 The package defines an internal binary sensor named `reflex_active`. Its `on_press` and `on_release` automations light the XIAO user LED at takeover and turn it off at handback. The packaged `on_rule_result` automation logs each rule ID, source event number and command status over USB. Status zero means success. [Command result codes](../docs/troubleshooting.md)
 
-The subscribed and required peer sensors sample the local Matter state every five seconds and publish changes. Required peers counts distinct button and target nodes across the current rules. Reset reason and minimum free heap use ESPHome’s debug component.
+The subscribed and required peer sensors sample the local Matter state every five seconds and publish changes. The required count includes each distinct button or target node once. Reset reason and minimum free heap use ESPHome’s debug component.
 
 ## Encrypted ESPHome management
 
@@ -32,7 +34,7 @@ Include `examples/encrypted-api.yaml` as a second package and set the local subs
 
 In Home Assistant, select the encrypted board in the Reflex transfer setup. For an existing Reflex entry, use **Reconfigure**. The integration verifies the selected board’s Matter fabric and node before accepting it and checks the installed hash after each write.
 
-## Build
+## Build the HTTP-compatible profile
 
 1. Use a checkout with working Git symlinks. The external component links to the same C++ sources that the standalone firmware builds.
 2. Create `examples/secrets.yaml` with two quoted strings. Set `thread_tlv` to the active operational dataset of the test mesh and `reflex_transfer_key` to a new 64-digit hexadecimal key. Home Assistant uses that key for the authenticated rule-transfer fallback. Both values are embedded in the compiled image. [Obtaining the Thread dataset](../firmware/README.md#join-the-thread-network)
@@ -75,6 +77,25 @@ After the comparison succeeds, write only the existing factory application at of
 ```
 
 Check the original Reflex device in Home Assistant for synchronized rules and standby. The ESPHome USB log reports the node ID and rule fingerprint on startup and prints lease state changes.
+
+## Thread OTA
+
+For a **new board**, use `xiao-esp32c6-ota.yaml` for its first USB installation. Set a unique `reflex_api_key` in your local secrets along with the Thread dataset. OTA requires encryption and shares the board’s native API key. Pair it on-network and add the encrypted ESPHome integration before setting up Matter Reflex. The package equivalents for a Device Builder installation are `xiao-base.yaml`, `encrypted-api.yaml` and `ota.yaml` at the same release tag. Supply the substitutions from local secrets.
+
+For a **commissioned board using the standalone partition table**, build `xiao-esp32c6-existing-ota.yaml`. It preserves NVS, PHY and factory data and splits the former application space into two slots. Make a current private full-flash backup first. Verify the current table matches the standalone table as described above and that both new slots fit the built image. Install the bootloader, partition table, first application and initial OTA selection data at the individual offsets from the generated `flash_args`. Use individual segments so the gaps containing commissioner and fabric data are preserved.
+
+```sh
+./dev esphome compile examples/xiao-esp32c6-existing-ota.yaml
+./dev usb bash -ec 'cd /work/examples/.esphome/build/matter-reflex/build && python -m esptool --chip esp32c6 --port "$ESPPORT" write_flash @flash_args'
+```
+
+Use this USB command only for the initial layout conversion. Subsequent updates use the same profile over routable Thread IPv6 from the Device Builder host. The ESPHome OTA uploader writes the inactive slot. Keep the private USB backup for rollback.
+
+```sh
+esphome upload examples/xiao-esp32c6-existing-ota.yaml --device YOUR_THREAD_IPV6_ADDRESS
+```
+
+After the USB installation and again after an OTA update, verify the same commissioned node, saved rules hash, peer readiness and standby on lease renewal.
 
 ## Hardware observations
 
