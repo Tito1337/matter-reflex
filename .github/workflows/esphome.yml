@@ -1,0 +1,38 @@
+name: ESPHome XIAO firmware
+on:
+  workflow_dispatch:
+  push:
+    paths: ['components/**', 'firmware/**', 'examples/**', 'dev', '.github/workflows/esphome.yml']
+  pull_request:
+    paths: ['components/**', 'firmware/**', 'examples/**', 'dev', '.github/workflows/esphome.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        profile: [xiao-esp32c6-ota, xiao-esp32c6-existing-ota]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create disposable build credentials
+        run: |
+          python3 - <<'PYTHON'
+          import base64
+          import secrets
+          from pathlib import Path
+
+          # Public sample operational dataset from the ESPHome OpenThread documentation.
+          dataset = "0e080000000000010000000300001035060004001fffe00208e227ac6a7f24052f0708fdb753eb517cb4d3051062b2442a928d9ea3b947a1618fc4085a030f4f70656e5468726561642d393837330102987304105330d857354330133c05e1fd7ae81a910c0402a0f7f8"
+          key = base64.b64encode(secrets.token_bytes(32)).decode()
+          with Path("examples/secrets.yaml").open("x") as output:
+              print(f"thread_tlv: '{dataset}'", file=output)
+              print(f"reflex_api_key: '{key}'", file=output)
+          PYTHON
+      - name: Compile and link the Thread OTA profile
+        run: ./dev esphome compile examples/${{ matrix.profile }}.yaml

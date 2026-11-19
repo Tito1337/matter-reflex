@@ -32,6 +32,8 @@ If you change the firmware or SDK, also build the application for the microcontr
 
 The [software checks](.github/workflows/checks.yml) run on pushes and pull requests. The [ESP32-C6 build](.github/workflows/firmware.yml) runs when the firmware, its launcher, or its workflow changes. You can also run either workflow manually on GitHub.
 
+The [ESPHome firmware check](.github/workflows/esphome.yml) also compiles both Thread OTA layouts with disposable credentials on a fresh runner. For local builds and the hardware verification sequence see the [XIAO profiles](examples/README.md).
+
 ## Adding a Matter target
 
 1. Record the device type, cluster, accepted commands, and capabilities of the Home Assistant entity. A single plug may expose both a switch for its power output and several configuration settings.

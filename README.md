@@ -2,7 +2,7 @@
 
 Keep a Matter button working when Home Assistant or its Matter Server goes offline. Matter Reflex pairs a Home Assistant integration with a **Seeed Studio XIAO ESP32-C6** on your Thread network. Add the `reflex` label to a supported automation and the board stores its rules. If Home Assistant stops renewing a ten-second lease, the board can send commands directly to your lights, plugs and shades.
 
-[Quick start](docs/quickstart.en.md) · [Firmware setup](firmware/README.md) · [Troubleshooting](docs/troubleshooting.md) · [Contributing](CONTRIBUTING.md)
+[ESPHome XIAO installation](examples/README.md) · [Quick start](docs/quickstart.en.md) · [Firmware setup](firmware/README.md) · [Troubleshooting](docs/troubleshooting.md) · [Contributing](CONTRIBUTING.md)
 
 ## Your first automation
 
@@ -42,8 +42,8 @@ The board stores up to **32 gesture–target pairs**. A gesture that controls th
 ## Installation
 
 1. Prepare Home Assistant with Matter, a working Thread network and border router, a XIAO ESP32-C6 and a USB data cable. The build instructions use Linux with rootless Podman.
-2. Build and provision the firmware, then commission the XIAO onto Home Assistant's Matter fabric. The supplied profile uses the SDK's development attestation credentials. [Firmware guide](firmware/README.md)
-3. Copy the [matter_reflex integration directory](custom_components/matter_reflex) into `config/custom_components/`. Check your Home Assistant configuration and restart Core. Under **Settings → Devices & services**, add **Matter Reflex** and select your board. If prompted for the transfer key, enter the one you provisioned on the board.
+2. Install the [ESPHome XIAO package](examples/README.md) and commission the board on-network. The package supports local takeover indication, per-rule logging, peer diagnostics and encrypted management and updates over Thread. For an existing standalone board, follow the commissioning-preserving USB migration in the same guide. The [standalone firmware guide](firmware/README.md) covers the original build and recovery.
+3. Copy the [matter_reflex integration directory](custom_components/matter_reflex) into `config/custom_components/`. Check your Home Assistant configuration and restart Core. Under **Settings → Devices & services**, add **Matter Reflex** and select your board. If prompted for a rules transport, select the encrypted ESPHome board or enter its provisioned HTTP transfer key.
 4. Try the double press above. During normal operation, **Synchronized** is on, **Active** is off, and Home Assistant controls the lamp.
 
 ## How failover works
@@ -72,7 +72,7 @@ To repeat an outage test, read the counter over USB and confirm `active=1` befor
 
 ## Development
 
-An experimental [ESPHome build for the XIAO ESP32-C6](examples/README.md) uses the same rule engine and Home Assistant integration.
+The ESPHome component and standalone application share the same C++ rule engine and Home Assistant integration. Both receive their lease through Matter.
 
 The [contribution guide](CONTRIBUTING.md) covers the Python tests, the binary contract test with the C++ engine, and the target firmware build from a fresh clone. The [Home Assistant compiler](custom_components/matter_reflex/compiler.py) defines which automations Reflex accepts. The [firmware engine](firmware/main/reflex_engine.cpp) decodes those rules. The [tests](tests/) cover the shared format, Matter permissions and engine behavior.
 
