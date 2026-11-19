@@ -32,4 +32,22 @@ matter:
   vendor_id: 0xFFF1
   product_id: 0x8000
 
+output:
+  - platform: gpio
+    id: reflex_indicator
+    pin:
+      number: GPIO15
+      inverted: true
+
 matter_reflex:
+  active:
+    id: reflex_active
+    internal: true
+    on_press:
+      - output.turn_on: reflex_indicator
+    on_release:
+      - output.turn_off: reflex_indicator
+  on_rule_result:
+    - logger.log:
+        format: "Rule %08lx, source event %llu, status 0x%03x"
+        args: [rule_id, event_number, status]

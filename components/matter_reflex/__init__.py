@@ -2,15 +2,18 @@
 
 import re
 
+from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
+from esphome.components import binary_sensor
 from esphome.components.esp32 import add_idf_sdkconfig_option, include_builtin_idf_component
 from esphome.components.matter.types import MatterComponent
 from esphome.components.network import require_ipv4
 from esphome.const import CONF_ID
 
 DOMAIN = "matter_reflex"
+AUTO_LOAD = ["binary_sensor"]
 DEPENDENCIES = ["matter", "openthread"]
 ReflexComponent = cg.esphome_ns.namespace(DOMAIN).class_("ReflexComponent", cg.Component)
 
@@ -26,6 +29,8 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema({
         cv.GenerateID(): cv.declare_id(ReflexComponent),
         cv.GenerateID("matter_id"): cv.use_id(MatterComponent),
+        cv.Optional("active"): binary_sensor.binary_sensor_schema(),
+        cv.Optional("on_rule_result"): automation.validate_automation(single=True),
         cv.Optional("transfer_key"): cv.sensitive(transfer_key),
     }).extend(cv.COMPONENT_SCHEMA),
     # The pinned Matter SDK compiles IPv4 address helpers even on a Thread node.
@@ -47,6 +52,15 @@ FINAL_VALIDATE_SCHEMA = final_validate
 async def to_code(config):
     component = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(component, config)
+    if "active" in config:
+        active = await binary_sensor.new_binary_sensor(config["active"])
+        cg.add(component.set_active_sensor(active))
+    if "on_rule_result" in config:
+        await automation.build_automation(
+            component.get_result_trigger(),
+            [(cg.uint32, "rule_id"), (cg.uint64, "event_number"), (cg.uint16, "status")],
+            config["on_rule_result"],
+        )
     parent = await cg.get_variable(config["matter_id"])
     cg.add(component.register_endpoints(parent))
     for cluster in ("ACTIONS", "ON_OFF", "GROUPS", "IDENTIFY"):

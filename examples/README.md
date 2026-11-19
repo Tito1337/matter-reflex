@@ -22,6 +22,8 @@ matter_reflex:
 
 The tag selects the Reflex code and its tested Matter dependency. The checkout examples override the component source to build local changes.
 
+The package defines an internal binary sensor named `reflex_active`. Its `on_press` and `on_release` automations light the XIAO user LED at takeover and turn it off at handback. The packaged `on_rule_result` automation logs each rule ID, source event number and command status over USB. Status zero means success. [Command result codes](../docs/troubleshooting.md)
+
 ## Build
 
 1. Use a checkout with working Git symlinks. The external component links to the same C++ sources that the standalone firmware builds.

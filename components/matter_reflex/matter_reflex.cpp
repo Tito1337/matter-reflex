@@ -13,6 +13,7 @@
 namespace esphome::matter_reflex {
 namespace {
 constexpr char TAG[] = "matter_reflex";
+ReflexComponent *instance;  // One Reflex endpoint set per Matter node.
 
 // HA verifies BasicInformation.ProductName before it accepts the lease endpoint.
 class ReflexDeviceInfo : public chip::DeviceLayer::Internal::GenericDeviceInstanceInfoProvider<
@@ -56,6 +57,7 @@ void ReflexComponent::setup() {
     mark_failed();
     return;
   }
+  bool initial_active;
   {
     esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
     reflex_peers::set_subscription_listener([](uint64_t peer) {
@@ -63,12 +65,20 @@ void ReflexComponent::setup() {
                static_cast<unsigned long long>(peer),
                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
     });
+    instance = this;
     reflex_runtime::start([](bool active) {
       ESP_LOGI(TAG, "Lease state: %s", active ? "active" : "standby");
+      if (instance->active_sensor_)
+        instance->defer([active]() { instance->active_sensor_->publish_state(active); });
+    }, [](uint32_t rule, uint64_t event, uint16_t status) {
+      // CHIP callbacks run under the stack lock. Run YAML actions on ESPHome's loop.
+      instance->defer([rule, event, status]() { instance->result_trigger_.trigger(rule, event, status); });
     });
+    initial_active = reflex_runtime::active();
     ESP_LOGI(TAG, "Node %016llx, rules hash %s",
              static_cast<unsigned long long>(reflex_runtime::self_node()), reflex_runtime::rules_hash());
   }
+  if (active_sensor_) active_sensor_->publish_initial_state(initial_active);
   if (reflex_http_start(transfer_key_) != ESP_OK) {
     ESP_LOGE(TAG, "Could not start the authenticated rule transfer service");
     mark_failed();

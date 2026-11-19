@@ -33,6 +33,7 @@ reflex::LeaseDeadline deadline;
 uint32_t execution_count;
 bool reported_active;
 void (*active_changed)(bool);
+ResultListener result_listener;
 bool initialized;
 FabricIndex fabric_index;
 uint64_t fabric_identity;
@@ -386,7 +387,8 @@ void create_cluster(esp_matter::endpoint_t *endpoint) {
     ESP_ERROR_CHECK(event::create(cluster, 0) ? ESP_OK : ESP_ERR_NO_MEM);
 }
 
-void start(void (*on_active_changed)(bool)) {
+void start(void (*on_active_changed)(bool), ResultListener on_result) {
+    result_listener = on_result;
     active_changed = on_active_changed;
     ESP_ERROR_CHECK(nvs_open("reflex", NVS_READWRITE, &storage));
     ESP_ERROR_CHECK(AttributeAccessInterfaceRegistry::Instance().Register(&action_lists) ? ESP_OK : ESP_FAIL);
@@ -420,6 +422,7 @@ struct Executed {
 void command_result(uint32_t rule, uint64_t event, uint16_t status) {
     if (!owner_current()) return;
     ++execution_count;
+    if (result_listener) result_listener(rule, event, status);
     changed(Executions);
     EventNumber n;
     auto err = LogEvent(Executed{rule, event, status}, kEndpoint, n);

@@ -16,6 +16,7 @@ uint32_t executions();
 uint64_t self_node();
 uint64_t fabric_id();
 void create_cluster(esp_matter::endpoint_t *ep);
-void start(void (*on_active_changed)(bool) = nullptr);
+using ResultListener = void (*)(uint32_t rule, uint64_t event, uint16_t status);
+void start(void (*on_active_changed)(bool) = nullptr, ResultListener on_result = nullptr);
 void command_result(uint32_t rule, uint64_t event, uint16_t status);
 } // namespace reflex_runtime
