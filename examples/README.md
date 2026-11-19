@@ -24,6 +24,8 @@ The tag selects the Reflex code and its tested Matter dependency. The checkout e
 
 The package defines an internal binary sensor named `reflex_active`. Its `on_press` and `on_release` automations light the XIAO user LED at takeover and turn it off at handback. The packaged `on_rule_result` automation logs each rule ID, source event number and command status over USB. Status zero means success. [Command result codes](../docs/troubleshooting.md)
 
+The subscribed and required peer sensors sample the local Matter state every five seconds and publish changes. Required peers counts distinct button and target nodes across the current rules. Reset reason and minimum free heap use ESPHome’s debug component.
+
 ## Build
 
 1. Use a checkout with working Git symlinks. The external component links to the same C++ sources that the standalone firmware builds.

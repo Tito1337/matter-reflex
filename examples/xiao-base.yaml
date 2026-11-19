@@ -32,6 +32,21 @@ matter:
   vendor_id: 0xFFF1
   product_id: 0x8000
 
+debug:
+  update_interval: 5min
+
+sensor:
+  - platform: debug
+    min_free:
+      name: Minimum free heap
+      entity_category: diagnostic
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: Reset reason
+      entity_category: diagnostic
+
 output:
   - platform: gpio
     id: reflex_indicator
@@ -40,6 +55,10 @@ output:
       inverted: true
 
 matter_reflex:
+  ready_peers:
+    name: Subscribed peers
+  required_peers:
+    name: Required peers
   active:
     id: reflex_active
     internal: true

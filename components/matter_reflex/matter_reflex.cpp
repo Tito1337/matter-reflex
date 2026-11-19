@@ -51,6 +51,16 @@ void ReflexComponent::register_endpoints(matter::MatterComponent *parent) {
   parent->register_endpoint(2, build_legacy_output);
 }
 
+void ReflexComponent::publish_readiness() {
+  reflex_peers::Readiness counts;
+  {
+    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+    counts = reflex_peers::readiness();
+  }
+  if (ready_sensor_ && ready_sensor_->state != counts.ready) ready_sensor_->publish_state(counts.ready);
+  if (required_sensor_ && required_sensor_->state != counts.total) required_sensor_->publish_state(counts.total);
+}
+
 void ReflexComponent::setup() {
   if (parent_->is_failed()) {
     ESP_LOGE(TAG, "Matter startup failed");
@@ -79,6 +89,10 @@ void ReflexComponent::setup() {
              static_cast<unsigned long long>(reflex_runtime::self_node()), reflex_runtime::rules_hash());
   }
   if (active_sensor_) active_sensor_->publish_initial_state(initial_active);
+  if (ready_sensor_ || required_sensor_) {
+    publish_readiness();
+    set_interval(5000, [this]() { publish_readiness(); });
+  }
   if (reflex_http_start(transfer_key_) != ESP_OK) {
     ESP_LOGE(TAG, "Could not start the authenticated rule transfer service");
     mark_failed();

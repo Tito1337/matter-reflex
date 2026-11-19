@@ -6,14 +6,14 @@ from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
-from esphome.components import binary_sensor
+from esphome.components import binary_sensor, sensor
 from esphome.components.esp32 import add_idf_sdkconfig_option, include_builtin_idf_component
 from esphome.components.matter.types import MatterComponent
 from esphome.components.network import require_ipv4
 from esphome.const import CONF_ID
 
 DOMAIN = "matter_reflex"
-AUTO_LOAD = ["binary_sensor"]
+AUTO_LOAD = ["binary_sensor", "sensor"]
 DEPENDENCIES = ["matter", "openthread"]
 ReflexComponent = cg.esphome_ns.namespace(DOMAIN).class_("ReflexComponent", cg.Component)
 
@@ -29,6 +29,8 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema({
         cv.GenerateID(): cv.declare_id(ReflexComponent),
         cv.GenerateID("matter_id"): cv.use_id(MatterComponent),
+        cv.Optional("ready_peers"): sensor.sensor_schema(accuracy_decimals=0, entity_category="diagnostic"),
+        cv.Optional("required_peers"): sensor.sensor_schema(accuracy_decimals=0, entity_category="diagnostic"),
         cv.Optional("active"): binary_sensor.binary_sensor_schema(),
         cv.Optional("on_rule_result"): automation.validate_automation(single=True),
         cv.Optional("transfer_key"): cv.sensitive(transfer_key),
@@ -52,6 +54,12 @@ FINAL_VALIDATE_SCHEMA = final_validate
 async def to_code(config):
     component = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(component, config)
+    if "ready_peers" in config:
+        ready = await sensor.new_sensor(config["ready_peers"])
+        cg.add(component.set_ready_sensor(ready))
+    if "required_peers" in config:
+        required = await sensor.new_sensor(config["required_peers"])
+        cg.add(component.set_required_sensor(required))
     if "active" in config:
         active = await binary_sensor.new_binary_sensor(config["active"])
         cg.add(component.set_active_sensor(active))

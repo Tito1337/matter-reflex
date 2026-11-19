@@ -15,6 +15,7 @@
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <new>
 
@@ -28,6 +29,7 @@ FabricIndex fabric;
 uint32_t generation;
 void (*subscription_listener)(uint64_t);
 const reflex::Rules *rule_set;
+unsigned required_peers;
 reflex::State states[reflex::kMaxRules];
 
 void forget_states(NodeId node) {
@@ -284,8 +286,23 @@ void configure(FabricIndex index, const reflex::Rules &rules) {
     for (auto &p : peers) if (p) { p->reset(); p.reset(); }
     fabric = index;
     rule_set = &rules;
+    std::array<NodeId, 2 * reflex::kMaxRules> nodes;
+    auto end = nodes.begin();
+    for (size_t i = 0; i < rules.count; ++i) {
+        *end++ = rules.rows[i].source;
+        *end++ = rules.rows[i].target;
+    }
+    std::sort(nodes.begin(), end);
+    required_peers = std::unique(nodes.begin(), end) - nodes.begin();
     for (size_t i = 0; i < rules.count; ++i) states[i] = {-1, -1};
 }
+Readiness readiness() {
+    unsigned ready = 0;
+    for (const auto &peer : peers)
+        if (peer && peer->established) ++ready;
+    return {ready, required_peers};
+}
+
 void tick() {
     if (!fabric || !rule_set) return;
     for (size_t i = 0; i < rule_set->count; ++i) {
