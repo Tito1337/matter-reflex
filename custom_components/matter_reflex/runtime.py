@@ -20,7 +20,14 @@ from .acl import AclManager
 from .compiler import async_compile
 from .const import DOMAIN, HEARTBEAT_SECONDS
 from .status import RETRY_INTERVAL, StatusMonitor
-from .transport import CHANNEL_ERRORS, Channel, ReflexError, client_for, is_reflex
+from .transport import (
+    CHANNEL_ERRORS,
+    Channel,
+    ESPHomeChannel,
+    ReflexError,
+    client_for,
+    is_reflex,
+)
 from .wire import digest
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,11 +41,16 @@ class Runtime:
         # Entries created before transport negotiation used the authenticated
         # Thread channel for rules and have a key but no mode field.
         mode = entry.data.get("mode", "http" if "key" in entry.data else "matter")
-        if mode not in ("matter", "http"):
+        if mode == "matter":
+            self.channel = None
+        elif mode == "http":
+            self.channel = Channel(hass, self.node, entry.data["key"])
+        elif mode == "esphome":
+            self.channel = ESPHomeChannel(
+                hass, self.node, entry.data["fabric"], entry.data["esphome_entry_id"]
+            )
+        else:
             raise ReflexError("Unsupported Reflex rules transport")
-        self.channel = (
-            Channel(hass, self.node, entry.data["key"]) if mode == "http" else None
-        )
         self.acls = AclManager(
             Store(
                 hass,
@@ -207,7 +219,7 @@ class Runtime:
 
     async def transfer(self, client, image):
         if self.channel is not None:
-            await self.channel.request(client, "rules", image)
+            await self.channel.send_rules(client, image)
             return
         for frame in native.frames(image):
             await native.write_frame(client, self.node, frame)

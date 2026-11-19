@@ -1,0 +1,19 @@
+# Set reflex_api_key from a local !secret when including this package.
+api:
+  encryption:
+    key: ${reflex_api_key}
+  reboot_timeout: 0s
+  actions:
+    - action: reflex_exchange
+      supports_response: only
+      variables:
+        fabric: string
+        node: string
+        image: string
+      then:
+        - api.respond:
+            data: !lambda |-
+              id(reflex_controller).api_exchange(fabric, node, image, root);
+
+matter_reflex:
+  api_rules: true

@@ -11,14 +11,15 @@
       },
       "fallback": {
         "title": "Set up rules transfer over Thread",
-        "description": "This Matter server cannot transfer the manufacturer’s rules. Enter the 64-character hexadecimal key provisioned over USB to authenticate the fallback channel. The lease uses Matter.",
+        "description": "Select the encrypted ESPHome board or enter the 64-character hexadecimal HTTP transfer key. The lease uses Matter.",
         "data": {
-          "key": "Thread channel key"
+          "key": "Thread channel key",
+          "esphome_entry_id": "Encrypted ESPHome board"
         }
       }
     },
     "error": {
-      "cannot_connect": "Authentication failed. Check the USB-provisioned key and Thread IPv6 connectivity.",
+      "cannot_connect": "Check the board identity, credentials and Thread connectivity.",
       "invalid_input": "Invalid selection or key.",
       "matter_unavailable": "Cannot reach the node over Matter. Check its availability and retry.",
       "lease_unsupported": "Matter Server cannot renew the lease with this firmware. Verify that the board runs Reflex firmware 1.3.0 or later and that this controller has administrator access to it. After a firmware update, re-interview the board in Matter Server to discover its Actions cluster, then retry."

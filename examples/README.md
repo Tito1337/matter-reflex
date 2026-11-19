@@ -26,6 +26,12 @@ The package defines an internal binary sensor named `reflex_active`. Its `on_pre
 
 The subscribed and required peer sensors sample the local Matter state every five seconds and publish changes. Required peers counts distinct button and target nodes across the current rules. Reset reason and minimum free heap use ESPHome’s debug component.
 
+## Encrypted ESPHome management
+
+Include `examples/encrypted-api.yaml` as a second package and set the local substitution `reflex_api_key: !secret reflex_api_key` to a unique ESPHome encryption key. Add the device to the ESPHome integration in Home Assistant using its Thread IPv6 address and that key. The native API exposes peer and heap diagnostics and the `reflex_exchange` action. An empty image reads status. A complete hexadecimal rules image is validated and committed only for the specified 16-digit compressed fabric and node IDs. The response contains the installed hash. The lease continues to travel through Matter Server, and API client loss does not reboot the device.
+
+In Home Assistant, select the encrypted board in the Reflex transfer setup. For an existing Reflex entry, use **Reconfigure**. The integration verifies the selected board’s Matter fabric and node before accepting it and checks the installed hash after each write.
+
 ## Build
 
 1. Use a checkout with working Git symlinks. The external component links to the same C++ sources that the standalone firmware builds.

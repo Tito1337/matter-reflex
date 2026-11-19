@@ -55,6 +55,7 @@ output:
       inverted: true
 
 matter_reflex:
+  id: reflex_controller
   ready_peers:
     name: Subscribed peers
   required_peers:

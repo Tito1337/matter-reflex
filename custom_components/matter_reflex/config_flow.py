@@ -10,16 +10,30 @@ from matter_server.common.errors import InvalidArguments, InvalidCommand
 
 from . import native
 from .const import DOMAIN
-from .transport import CHANNEL_ERRORS, Channel, ReflexError, client_for, is_reflex
+from .transport import (
+    CHANNEL_ERRORS,
+    Channel,
+    ESPHomeChannel,
+    ReflexError,
+    client_for,
+    esphome_action,
+    is_reflex,
+)
 
 
 class ReflexConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
-    def _entry(self, mode, key=None):
+    def _entry(self, mode, key=None, esphome_entry_id=None):
         data = {**self._selection, "mode": mode}
         if key is not None:
             data["key"] = key
+        if esphome_entry_id is not None:
+            data["esphome_entry_id"] = esphome_entry_id
+        if self.context.get("source") == config_entries.SOURCE_RECONFIGURE:
+            return self.async_update_reload_and_abort(
+                self._get_reconfigure_entry(), data=data
+            )
         return self.async_create_entry(
             title=f"Matter Reflex ({data['node_id']})", data=data
         )
@@ -81,13 +95,27 @@ class ReflexConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required("node"): vol.In(choices)}),
         )
 
+    async def async_step_reconfigure(self, user_input=None):
+        entry = self._get_reconfigure_entry()
+        self._selection = {
+            k: entry.data[k] for k in ("node_id", "fabric", "matter_entry_id")
+        }
+        return await self.async_step_fallback(user_input)
+
     async def async_step_fallback(self, user_input=None):
         errors = {}
         if user_input is not None:
-            key = user_input["key"].strip().lower()
-            if re.fullmatch("[0-9a-f]{64}", key):
-                try:
-                    selected = self._selection
+            selected = self._selection
+            api_id = user_input.get("esphome_entry_id")
+            key = user_input.get("key", "").strip().lower()
+            try:
+                if api_id and not key:
+                    channel = ESPHomeChannel(
+                        self.hass, selected["node_id"], selected["fabric"], api_id
+                    )
+                    await channel.status(None)
+                    return self._entry("esphome", esphome_entry_id=api_id)
+                if not api_id and re.fullmatch("[0-9a-f]{64}", key):
                     client = client_for(
                         self.hass, selected["matter_entry_id"], selected["fabric"]
                     )
@@ -97,22 +125,26 @@ class ReflexConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         await Channel(self.hass, selected["node_id"], key).status(
                             client
                         )
-                except CHANNEL_ERRORS:
-                    errors["base"] = "cannot_connect"
-                else:
                     return self._entry("http", key)
-            else:
                 errors["base"] = "invalid_input"
+            except CHANNEL_ERRORS:
+                errors["base"] = "cannot_connect"
+        api_choices = {
+            entry.entry_id: entry.title
+            for entry in self.hass.config_entries.async_loaded_entries("esphome")
+            if esphome_action(self.hass, entry)
+        }
+        fields = {
+            (
+                vol.Optional("key") if api_choices else vol.Required("key")
+            ): selector.TextSelector(
+                selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+            )
+        }
+        if api_choices:
+            fields[vol.Optional("esphome_entry_id")] = vol.In(api_choices)
         return self.async_show_form(
             step_id="fallback",
             errors=errors,
-            data_schema=vol.Schema(
-                {
-                    vol.Required("key"): selector.TextSelector(
-                        selector.TextSelectorConfig(
-                            type=selector.TextSelectorType.PASSWORD
-                        )
-                    )
-                }
-            ),
+            data_schema=vol.Schema(fields),
         )

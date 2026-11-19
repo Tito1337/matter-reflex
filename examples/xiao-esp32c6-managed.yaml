@@ -1,0 +1,7 @@
+# Keep the commissioned board's partitions and add the encrypted ESPHome API.
+packages:
+  board: !include xiao-esp32c6-existing.yaml
+  management: !include encrypted-api.yaml
+
+substitutions:
+  reflex_api_key: !secret reflex_api_key

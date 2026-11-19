@@ -354,7 +354,9 @@ def flow_with_node():
         runtime_data=SimpleNamespace(adapter=SimpleNamespace(matter_client=client)),
     )
     flow.hass = SimpleNamespace(
-        config_entries=SimpleNamespace(async_loaded_entries=Mock(return_value=[entry]))
+        config_entries=SimpleNamespace(
+            async_loaded_entries=lambda domain: [entry] if domain == "matter" else []
+        )
     )
     flow.async_set_unique_id = AsyncMock()
     flow._abort_if_unique_id_configured = Mock()
@@ -414,3 +416,36 @@ async def test_unsupported_lease_cannot_be_bypassed_by_rules_fallback(monkeypatc
     assert result["step_id"] == "user"
     assert result["errors"] == {"base": "lease_unsupported"}
     probe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_verifies_esphome_board_and_preserves_identity(monkeypatch):
+    flow, _ = flow_with_node()
+    flow.context = {"source": "reconfigure"}
+    entry = SimpleNamespace(
+        data={
+            "matter_entry_id": "fabric",
+            "node_id": 31,
+            "fabric": 42,
+            "mode": "http",
+            "key": "01" * 32,
+        }
+    )
+    flow._get_reconfigure_entry = Mock(return_value=entry)
+    flow.async_update_reload_and_abort = Mock()
+    status = AsyncMock()
+    api = Mock(return_value=SimpleNamespace(status=status))
+    monkeypatch.setattr(config_flow, "ESPHomeChannel", api)
+    await flow.async_step_reconfigure({"esphome_entry_id": "bureau"})
+    status.assert_awaited_once_with(None)
+    api.assert_called_once_with(flow.hass, 31, 42, "bureau")
+    flow.async_update_reload_and_abort.assert_called_once_with(
+        entry,
+        data={
+            "matter_entry_id": "fabric",
+            "node_id": 31,
+            "fabric": 42,
+            "mode": "esphome",
+            "esphome_entry_id": "bureau",
+        },
+    )

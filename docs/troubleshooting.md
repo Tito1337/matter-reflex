@@ -24,7 +24,7 @@ new code in a test instance while the same Core process keeps running.
 
 ## Downloading Home Assistant diagnostics
 
-Go to **Settings → Devices & services → Matter Reflex**, open the integration entry’s menu, and select **Download diagnostics**. The `data` section shows which transport synchronizes the rules (`matter` or `http`), whether the latest status is available, whether Reflex is active, whether the rules are synchronized, and how many rule results the XIAO has reported since startup. A value of `null` means the information is unavailable. During a server outage, you can read the board’s status directly over USB.
+Go to **Settings → Devices & services → Matter Reflex**, open the integration entry’s menu, and select **Download diagnostics**. The `data` section shows which transport synchronizes the rules (`matter`, `esphome` or `http`), whether the latest status is available, whether Reflex is active, whether the rules are synchronized, and how many rule results the XIAO has reported since startup. A value of `null` means the information is unavailable. During a server outage, you can read the board’s status directly over USB.
 
 Home Assistant reads a status snapshot when the board connects and verifies the rule hash after transferring rules. It listens for changes to the hash, active mode and execution count over Matter Server’s existing subscription. Once the server has delivered changes for all three attributes and can read them natively, steady operation needs no periodic status read. If any attribute has yet to report, or the server only supports authenticated HTTP diagnostics, Home Assistant refreshes the snapshot every five minutes. Unreported changes may take that long to appear.
 

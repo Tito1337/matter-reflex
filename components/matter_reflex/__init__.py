@@ -29,6 +29,7 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema({
         cv.GenerateID(): cv.declare_id(ReflexComponent),
         cv.GenerateID("matter_id"): cv.use_id(MatterComponent),
+        cv.Optional("api_rules", default=False): cv.boolean,
         cv.Optional("ready_peers"): sensor.sensor_schema(accuracy_decimals=0, entity_category="diagnostic"),
         cv.Optional("required_peers"): sensor.sensor_schema(accuracy_decimals=0, entity_category="diagnostic"),
         cv.Optional("active"): binary_sensor.binary_sensor_schema(),
@@ -41,7 +42,12 @@ CONFIG_SCHEMA = cv.All(
 
 
 def final_validate(config):
-    matter = fv.full_config.get()["matter"]
+    full_config = fv.full_config.get()
+    if config["api_rules"]:
+        api = full_config.get("api") or {}
+        if not (api.get("encryption") or {}).get("key") or api["reboot_timeout"].total_milliseconds:
+            raise cv.Invalid("API rules require an encryption key and api.reboot_timeout: 0s")
+    matter = full_config["matter"]
     if {1, 2}.intersection(matter["endpoints"]):
         raise cv.Invalid("Matter Reflex reserves endpoints 1 and 2")
     if matter.get("vendor_id") != 0xFFF1:
@@ -54,6 +60,8 @@ FINAL_VALIDATE_SCHEMA = final_validate
 async def to_code(config):
     component = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(component, config)
+    if config["api_rules"]:
+        cg.add_define("USE_REFLEX_API_RULES")
     if "ready_peers" in config:
         ready = await sensor.new_sensor(config["ready_peers"])
         cg.add(component.set_ready_sensor(ready))

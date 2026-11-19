@@ -51,6 +51,28 @@ void ReflexComponent::register_endpoints(matter::MatterComponent *parent) {
   parent->register_endpoint(2, build_legacy_output);
 }
 
+#ifdef USE_REFLEX_API_RULES
+void ReflexComponent::api_exchange(StringRef fabric, StringRef node, StringRef image, JsonObject reply) {
+  // An empty payload reads status. A nonempty payload replaces one complete table.
+  // Check both Matter identifiers under the same lock as the commit.
+  if (fabric.size() != 16 || node.size() != 16 || image.size() > 2 * reflex::kMaxImage || image.size() % 2) return;
+  std::array<uint8_t, reflex::kMaxImage> bytes;
+  if (!image.empty() && parse_hex(image.c_str(), image.size(), bytes.data(), image.size() / 2) != image.size()) return;
+  esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+  const auto owner = reflex_runtime::self_node();
+  char expected_fabric[17], expected_node[17];
+  format_hex_to(expected_fabric, reflex_runtime::fabric_id());
+  format_hex_to(expected_node, owner);
+  if (!owner || fabric != expected_fabric || node != expected_node) return;
+  if (!image.empty() && !reflex_runtime::replace_image(bytes.data(), image.size() / 2)) return;
+  reply["fabric"] = std::string(expected_fabric);
+  reply["node_id"] = std::string(expected_node);
+  reply["hash"] = std::string(reflex_runtime::rules_hash());
+  reply["active"] = reflex_runtime::active();
+  reply["executions"] = reflex_runtime::executions();
+}
+#endif
+
 void ReflexComponent::publish_readiness() {
   reflex_peers::Readiness counts;
   {

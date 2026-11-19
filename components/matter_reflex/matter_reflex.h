@@ -6,6 +6,11 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/matter/matter_component.h"
 
+#ifdef USE_REFLEX_API_RULES
+#include "esphome/components/json/json_util.h"
+#include "esphome/core/string_ref.h"
+#endif
+
 namespace esphome::matter_reflex {
 
 class ReflexComponent : public Component {
@@ -16,6 +21,9 @@ class ReflexComponent : public Component {
   void set_required_sensor(sensor::Sensor *sensor) { required_sensor_ = sensor; }
   void set_active_sensor(binary_sensor::BinarySensor *sensor) { active_sensor_ = sensor; }
   Trigger<uint32_t, uint64_t, uint16_t> *get_result_trigger() { return &result_trigger_; }
+#ifdef USE_REFLEX_API_RULES
+  void api_exchange(StringRef fabric, StringRef node, StringRef image, JsonObject reply);
+#endif
   void setup() override;
   float get_setup_priority() const override { return setup_priority::LATE; }
 
