@@ -1,0 +1,13 @@
+# For an already provisioned standalone Reflex board. Flash the application only.
+packages:
+  board: !include xiao-base.yaml
+
+esp32:
+  partitions: ../firmware/partitions.csv
+  framework:
+    sdkconfig_options:
+      CONFIG_PARTITION_TABLE_OFFSET: "0xC000"
+
+openthread:
+  # ESPHome uses the active dataset already held in NVS.
+  tlv: ""

@@ -28,6 +28,15 @@ case "$mode" in
 esac
 
 case "$mode" in
+    esphome)
+        exec "${podman_cmd[@]}" run --rm -i \
+            --volume "$project/examples:/config/examples:z" \
+            --volume "$project/components:/config/components:ro,z" \
+            --volume "$project/firmware/partitions.csv:/config/firmware/partitions.csv:ro,z" \
+            --volume "$project/firmware/main:/config/firmware/main:ro,z" \
+            --volume reflex-esphome-cache:/cache --workdir /config \
+            ghcr.io/esphome/esphome:2026.11.0 "$@"
+        ;;
     factory)
         install -d -m 0700 "$private_board"
         exec "${podman_cmd[@]}" "${run[@]}" --network none --volume "$private_board:/provision:Z" "$matter_image" python /work/tools/factory.py /provision
@@ -64,7 +73,7 @@ case "$mode" in
         exec "${podman_cmd[@]}" "${run[@]}" --network none --entrypoint "" "$ha_image" "$@"
         ;;
     *)
-        echo "Usage: ./dev {matter|matter-usb|factory|idf|usb|ha|test-lease} command [arguments...]" >&2
+        echo "Usage: ./dev {esphome|matter|matter-usb|factory|idf|usb|ha|test-lease} command [arguments...]" >&2
         exit 2
         ;;
 esac

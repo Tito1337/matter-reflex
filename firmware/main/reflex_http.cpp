@@ -166,7 +166,7 @@ esp_err_t request(httpd_req_t *req) {
 }
 }
 
-bool reflex_http_set_key(const char *value) {
+static bool configure_key(const char *value, bool preserve_binding) {
     if (!mutex || !value || strlen(value) != 64) return false;
     Key next{};
     for (size_t i=0; i<32; ++i) {
@@ -175,6 +175,11 @@ bool reflex_http_set_key(const char *value) {
         next[i] = (a << 4) | b;
     }
     xSemaphoreTake(mutex, portMAX_DELAY);
+    if (preserve_binding && configured && next == key) {
+        xSemaphoreGive(mutex);
+        mbedtls_platform_zeroize(next.data(), next.size());
+        return true;
+    }
     Credential replacement{next, 0, 0};
     bool ok = save(replacement);
     if (ok) {
@@ -186,7 +191,11 @@ bool reflex_http_set_key(const char *value) {
     mbedtls_platform_zeroize(next.data(), next.size());
     return ok;
 }
-esp_err_t reflex_http_start() {
+bool reflex_http_set_key(const char *value) {
+    return configure_key(value, false);
+}
+
+esp_err_t reflex_http_start(const char *boot_key) {
     if (server) return ESP_OK;
     if (!mutex) mutex = xSemaphoreCreateMutex();
     if (!mutex) return ESP_ERR_NO_MEM;
@@ -196,6 +205,7 @@ esp_err_t reflex_http_start() {
         configured = nvs_get_blob(nvs, "credential", &credential, &size) == ESP_OK && size == sizeof(credential);
         nvs_close(nvs);
     }
+    if (boot_key && !configure_key(boot_key, true)) return ESP_FAIL;
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port = 5581; cfg.stack_size = 12288; cfg.recv_wait_timeout = 2;
     cfg.send_wait_timeout = 2; cfg.lru_purge_enable = true;

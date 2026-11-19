@@ -6,4 +6,5 @@ namespace reflex_peers {
 // Called under CHIP lock, including subscription and invocation callbacks.
 void configure(chip::FabricIndex fabric, const reflex::Rules &rules);
 void tick();
+void set_subscription_listener(void (*listener)(uint64_t node));
 } // namespace reflex_peers

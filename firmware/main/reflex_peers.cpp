@@ -26,6 +26,7 @@ constexpr int64_t kSecond = 1000000;
 constexpr uint16_t kNoSession = 0x100, kUnknownState = 0x101, kTransportError = 0x102;
 FabricIndex fabric;
 uint32_t generation;
+void (*subscription_listener)(uint64_t);
 const reflex::Rules *rule_set;
 reflex::State states[reflex::kMaxRules];
 
@@ -85,7 +86,11 @@ public:
         }
     }
     void OnEventData(const EventHeader &, TLV::TLVReader *, const StatusIB *) override;
-    void OnSubscriptionEstablished(SubscriptionId) override { established = true; backoff = 1; }
+    void OnSubscriptionEstablished(SubscriptionId) override {
+        established = true;
+        backoff = 1;
+        if (subscription_listener) subscription_listener(node);
+    }
     void OnDone(ReadClient *) override { disconnect(); }
 private:
     std::unique_ptr<ReadClient> reader;
@@ -269,6 +274,10 @@ void Peer::OnEventData(const EventHeader &h, TLV::TLVReader *r, const StatusIB *
     }
 }
 } // namespace
+
+void set_subscription_listener(void (*listener)(uint64_t)) {
+    subscription_listener = listener;
+}
 
 void configure(FabricIndex index, const reflex::Rules &rules) {
     ++generation;

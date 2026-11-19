@@ -1,0 +1,8 @@
+packages:
+  board: !include xiao-base.yaml
+
+openthread:
+  tlv: !secret thread_tlv
+
+matter_reflex:
+  transfer_key: !secret reflex_transfer_key

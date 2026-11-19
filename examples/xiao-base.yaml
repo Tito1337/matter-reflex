@@ -1,0 +1,28 @@
+esphome:
+  name: matter-reflex
+
+esp32:
+  board: seeed_xiao_esp32c6
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+
+external_components:
+  - source: github://DavidvtWout/esphome-matter@547dbf85e029207b0fd01d198844002bd1f01a8c
+    components: [matter]
+  - source: ../components
+    components: [matter_reflex]
+
+logger:
+
+network:
+  enable_ipv6: true
+
+openthread:
+  device_type: FTD
+
+matter:
+  vendor_id: 0xFFF1
+  product_id: 0x8000
+
+matter_reflex:

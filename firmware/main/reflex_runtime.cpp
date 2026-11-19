@@ -32,6 +32,7 @@ nvs_handle_t storage;
 reflex::LeaseDeadline deadline;
 uint32_t execution_count;
 bool reported_active;
+void (*active_changed)(bool);
 bool initialized;
 FabricIndex fabric_index;
 uint64_t fabric_identity;
@@ -281,6 +282,7 @@ void update_active() {
     if (now != reported_active) {
         reported_active = now;
         changed(Active);
+        if (active_changed) active_changed(now);
     }
 }
 void timer(System::Layer *layer, void *) {
@@ -384,7 +386,8 @@ void create_cluster(esp_matter::endpoint_t *endpoint) {
     ESP_ERROR_CHECK(event::create(cluster, 0) ? ESP_OK : ESP_ERR_NO_MEM);
 }
 
-void start() {
+void start(void (*on_active_changed)(bool)) {
+    active_changed = on_active_changed;
     ESP_ERROR_CHECK(nvs_open("reflex", NVS_READWRITE, &storage));
     ESP_ERROR_CHECK(AttributeAccessInterfaceRegistry::Instance().Register(&action_lists) ? ESP_OK : ESP_FAIL);
     ESP_ERROR_CHECK(AttributeAccessInterfaceRegistry::Instance().Register(&access) ? ESP_OK : ESP_FAIL);
