@@ -1,4 +1,11 @@
+substitutions:
+  reflex_source: github://Tito1337/matter-reflex@esphome-v0.1.0
+
 esphome:
+  min_version: 2026.11.0
+  project:
+    name: tito1337.matter_reflex
+    version: "0.1.0"
   name: matter-reflex
 
 esp32:
@@ -10,7 +17,7 @@ esp32:
 external_components:
   - source: github://DavidvtWout/esphome-matter@547dbf85e029207b0fd01d198844002bd1f01a8c
     components: [matter]
-  - source: ../components
+  - source: ${reflex_source}
     components: [matter_reflex]
 
 logger:

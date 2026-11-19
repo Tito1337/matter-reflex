@@ -1,3 +1,6 @@
+substitutions:
+  reflex_source: ../components
+
 packages:
   board: !include xiao-base.yaml
 

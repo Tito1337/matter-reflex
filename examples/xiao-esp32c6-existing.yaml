@@ -1,4 +1,7 @@
 # For an already provisioned standalone Reflex board. Flash the application only.
+substitutions:
+  reflex_source: ../components
+
 packages:
   board: !include xiao-base.yaml
 
