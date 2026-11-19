@@ -9,3 +9,5 @@ for source in tests/engine_test.cpp tests/contract/decode.cpp; do
     g++ "${flags[@]}" firmware/main/reflex_engine.cpp "$source" -o "$build_dir/test"
     "$build_dir/test"
 done
+g++ "${flags[@]}" firmware/tests/lease_deadline_test.cpp -o "$build_dir/lease-test"
+"$build_dir/lease-test"

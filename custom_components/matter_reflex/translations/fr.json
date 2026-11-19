@@ -11,7 +11,7 @@
       },
       "fallback": {
         "title": "Configurer le transfert des règles sur Thread",
-        "description": "Ce serveur Matter ne permet pas le transfert des règles du fabricant. Saisissez la clé de 64 caractères hexadécimaux provisionnée par USB pour authentifier le canal de repli. Le bail utilise la commande Matter standard.",
+        "description": "Ce serveur Matter ne permet pas le transfert des règles du fabricant. Saisissez la clé de 64 caractères hexadécimaux provisionnée par USB pour authentifier le canal de repli. Le bail utilise Matter.",
         "data": {
           "key": "Clé du canal Thread"
         }
@@ -20,7 +20,8 @@
     "error": {
       "cannot_connect": "Échec de l’authentification. Vérifiez la clé USB et la connectivité IPv6 Thread.",
       "invalid_input": "Sélection ou clé incorrecte.",
-      "matter_unavailable": "Impossible de joindre le nœud via Matter. Vérifiez sa disponibilité et réessayez."
+      "matter_unavailable": "Impossible de joindre le nœud via Matter. Vérifiez sa disponibilité et réessayez.",
+      "lease_unsupported": "Le serveur Matter ne peut pas renouveler le bail avec ce firmware. Vérifiez que la carte utilise le firmware Reflex 1.3.0 ou ultérieur et que ce contrôleur y dispose des droits d’administration. Après une mise à jour du firmware, relancez l’interview de la carte dans le serveur Matter pour détecter le cluster Actions, puis réessayez."
     },
     "abort": {
       "no_nodes": "Aucun nœud Matter Reflex commissionné sur la fabric.",
@@ -35,6 +36,10 @@
     "sync": {
       "title": "Échec de la synchronisation Matter Reflex",
       "description": "{detail}"
+    },
+    "lease": {
+      "title": "Bail Matter Reflex indisponible",
+      "description": "{detail} Vérifiez que la carte utilise le firmware Reflex 1.3.0 ou ultérieur et que ce contrôleur y dispose des droits d’administration. Après une mise à jour du firmware, relancez l’interview de la carte dans le serveur Matter pour détecter le cluster Actions, puis réessayez."
     }
   },
   "entity": {

@@ -293,7 +293,13 @@ async def test_permission_change_reconciles_with_same_rule_image(monkeypatch):
     runtime.synced_permissions = None
 
     image = b"unchanged rule image"
-    runtime.read_status = AsyncMock(return_value={"hash": digest(image)})
+    runtime.status = None
+
+    async def observed(_):
+        runtime.status = {"hash": digest(image)}
+        return runtime.status
+
+    runtime.monitor = SimpleNamespace(refresh=AsyncMock(side_effect=observed))
     before = {15: {(1, 6, 3)}}
     after = {15: {(1, 6, 3), (1, 8, 3)}}
     monkeypatch.setattr(integration, "is_reflex", lambda _: True)
@@ -310,8 +316,10 @@ async def test_permission_change_reconciles_with_same_rule_image(monkeypatch):
 
     await runtime.sync()
     runtime.acls.reconcile.reset_mock()
+    runtime.monitor.refresh.reset_mock()
     await runtime.sync()
     runtime.acls.reconcile.assert_not_awaited()
+    runtime.monitor.refresh.assert_not_awaited()
     await runtime.sync()
     assert runtime.acls.reconcile.await_count == 2
     assert runtime.acls.reconcile.await_args_list[0].args == (client, after)

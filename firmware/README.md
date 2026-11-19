@@ -178,9 +178,42 @@ authenticated status request binds the key to the node and its fabric.
 
 ## Lease and rule execution
 
-Home Assistant renews the lease on endpoint 2, a logical On/Off Plug-in Unit.
-It sends `OnWithTimedOff` over a CASE session with administrator privileges
-to pause local rule execution for the requested duration.
+Integration 0.5.0 and firmware 1.3.0 (Matter SoftwareVersion 5) use the
+standard Actions cluster (`0x0025`) on endpoint 1. The board advertises
+**Renew Reflex lease** as action ID 1. Integration 0.5.1 schedules
+`InstantAction(actionID=1)` through Matter Server on a fixed four-second clock.
+If one renewal is lost, the following slot is eight seconds after the last
+successful slot, leaving about two seconds for delivery before expiry. Each accepted invocation
+from a CASE administrator on the owner fabric extends the local deadline to
+ten seconds after receipt. Expiry enables local rules and the next renewal
+returns the board to standby. The integration omits the optional InvokeID.
+Renewals neither start a reportable countdown nor emit a per-renewal event.
+
+When upgrading from integration 0.3.x, install the firmware first. The
+released integration can still send `OnWithTimedOff` on endpoint 2 while
+you update Home Assistant. If you tested the unreleased 0.4.0 integration,
+update the two components together during maintenance. Version 0.4.0 sends plain
+`On`, which only operates the virtual switch on firmware 1.3.0. On older
+firmware integration 0.5.0 requires a server that supports writing the
+vendor-specific Lease attribute. Open **Repairs** if renewal fails.
+A previously commissioned device may need a Matter re-interview after a
+firmware update for the controller to discover the new cluster.
+
+The renewal request must fit in one Matter UDP datagram on an established
+session. The two-node test through the Matter Server 1.5.5 command dispatcher measured
+a 78-byte encrypted UDP payload for each of two successful invocations.
+The test uses simulated IP links and a simulated peer. The response and
+possible retransmissions are separate, and Thread may fragment a datagram
+across IEEE 802.15.4 radio frames. Run `./dev test-lease` to repeat the test.
+
+Home Assistant listens for changes to Active, Executions and the rules hash
+through the server’s existing subscription. It reads a snapshot on connection
+or reconnection and verifies rule transfers. On controllers that cannot
+forward all three attributes, it also refreshes the snapshot every five
+minutes, falling back to the authenticated Thread channel when configured.
+A failed status check retries after one minute. The status display can lag on
+these controllers; USB provides a current reading during an outage. Status
+reads and subscription reports do not renew the lease.
 
 Endpoint 1 hosts the rules cluster and its vendor-specific `RuleExecuted`
 event. Fields 0 through 3 contain the rule ID, local node ID, source event

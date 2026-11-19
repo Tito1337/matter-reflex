@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from datetime import UTC, datetime
+from time import monotonic
 
 from homeassistant.components.automation.const import EVENT_AUTOMATION_RELOADED
 from homeassistant.const import EVENT_STATE_CHANGED
@@ -17,7 +18,8 @@ from homeassistant.helpers.storage import Store
 from . import native
 from .acl import AclManager
 from .compiler import async_compile
-from .const import DOMAIN, HEARTBEAT_SECONDS, LEASE_SECONDS
+from .const import DOMAIN, HEARTBEAT_SECONDS
+from .status import RETRY_INTERVAL, StatusMonitor
 from .transport import CHANNEL_ERRORS, Channel, ReflexError, client_for, is_reflex
 from .wire import digest
 
@@ -51,6 +53,8 @@ class Runtime:
         self.dirty = asyncio.Event()
         self.dirty.set()
         self.status = None
+        self.native_status_readable = False
+        self.monitor = StatusMonitor(self)
         self.target_hash = None
         self.last_sync = None
         self.acl_synced = False
@@ -83,6 +87,7 @@ class Runtime:
         self.entry.async_on_unload(
             self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._state)
         )
+        self.monitor.start()
         for target in (self._lease_loop, self._status_loop, self._sync_loop):
             self.entry.async_create_background_task(
                 self.hass, self._maintain_task(target), target.__name__
@@ -126,7 +131,7 @@ class Runtime:
             config_entry_id=self.entry.entry_id,
             is_fixable=False,
             severity=ir.IssueSeverity.WARNING,
-            translation_key="rule" if rule else "sync",
+            translation_key="rule" if rule else key,
             translation_placeholders={"detail": detail},
         )
 
@@ -134,24 +139,66 @@ class Runtime:
         ir.async_delete_issue(self.hass, DOMAIN, self.entry.entry_id + "." + key)
 
     async def _lease_loop(self):
+        clear_repair = True
+        verified = None
+        use_action = False
+        next_tick = None
         while True:
+            started = monotonic()
             try:
                 if self.hass.state is CoreState.running:
                     async with asyncio.timeout(4):
                         client = self.client()
-                        if not is_reflex(client.get_node(self.node)):
+                        node = client.get_node(self.node)
+                        if not is_reflex(node):
                             raise ReflexError("Selected node has no Reflex endpoint")
-                        await native.renew(client, self.node, LEASE_SECONDS)
-            except CHANNEL_ERRORS as err:
+                        # On an upgrade/reconnect, rediscover the transport. Old boards
+                        # reject InstantAction, so a stale choice also fails visibly.
+                        current = (
+                            client,
+                            node.node_data.attributes.get(native.SOFTWARE_VERSION_PATH),
+                        )
+                        if current != verified:
+                            use_action = await native.supports_lease_action(
+                                client, self.node
+                            )
+                            verified = current
+                        started = monotonic()  # Discovery can delay dispatch.
+                        await native.renew(client, self.node, use_action)
+                        if clear_repair:
+                            self.clear_issue("lease")
+                            clear_repair = False
+            except native.LeaseUnsupported as err:
+                self.issue("lease", str(err))
+                clear_repair = True
+                verified = None
+                await asyncio.sleep(60)
+                next_tick = None
+                continue
+            except (*CHANNEL_ERRORS, asyncio.CancelledError) as err:
+                if (
+                    isinstance(err, asyncio.CancelledError)
+                    and asyncio.current_task().cancelling()
+                ):
+                    raise
+                verified = None
                 _LOGGER.debug("Lease unavailable: %s", type(err).__name__)
-            await asyncio.sleep(HEARTBEAT_SECONDS)
+            # A suspended event loop can miss several slots. Resume once,
+            # without replaying a backlog of renewals.
+            if next_tick is None or started >= next_tick + HEARTBEAT_SECONDS:
+                next_tick = started
+            next_tick += HEARTBEAT_SECONDS
+            await asyncio.sleep(max(0.0, next_tick - monotonic()))
 
     async def read_status(self, client):
         if client is not None:
             try:
                 async with asyncio.timeout(3):
-                    return await native.read_status(client, self.node)
+                    latest = await native.read_status(client, self.node)
+                    self.native_status_readable = True
+                    return latest
             except CHANNEL_ERRORS:
+                self.native_status_readable = False
                 if self.channel is None:
                     raise
         if self.channel is None:
@@ -166,23 +213,7 @@ class Runtime:
             await native.write_frame(client, self.node, frame)
 
     async def _status_loop(self):
-        while True:
-            try:
-                try:
-                    client = self.client()
-                except ReflexError:
-                    client = None
-                async with asyncio.timeout(6):
-                    latest = await self.read_status(client)
-                if self.target_hash is not None and latest["hash"] != self.target_hash:
-                    self.dirty.set()
-            except CHANNEL_ERRORS as err:
-                _LOGGER.debug("Reflex status unavailable: %s", type(err).__name__)
-                latest = None
-            if latest != self.status:
-                self.status = latest
-                self.notify()
-            await asyncio.sleep(3)
+        await self.monitor.run()
 
     async def _sync_loop(self):
         while True:
@@ -197,6 +228,9 @@ class Runtime:
             if self.hass.state is not CoreState.running:
                 self.dirty.set()
                 await asyncio.sleep(2)
+                continue
+            if not self.monitor.online:
+                # The monitor wakes synchronization when the board reconnects.
                 continue
             try:
                 # Leave room for ICD check-in, but recover from a stalled request.
@@ -213,14 +247,17 @@ class Runtime:
                 _LOGGER.debug("Synchronization failed", exc_info=True)
                 self.dirty.set()
                 # Retry after sleeping even when many registry changes arrive.
-                await asyncio.sleep(10)
+                await asyncio.sleep(RETRY_INTERVAL)
             self.notify()
 
     async def sync(self):
         if self.hass.state is not CoreState.running:
             return
         client = self.client()
-        if not is_reflex(client.get_node(self.node)):
+        node = client.get_node(self.node)
+        if not node.available:
+            raise ReflexError("The Reflex node is offline")
+        if not is_reflex(node):
             raise ReflexError("The selected Matter node has no Reflex endpoint")
         compiled = await async_compile(
             self.hass, self.entry.data["matter_entry_id"], self.node
@@ -242,7 +279,11 @@ class Runtime:
             and self.synced_permissions == compiled.permissions
         )
         self.target_hash = expected
-        observed = await self.read_status(client)
+        # A periodic recompile only compares local state. Read back from the
+        # peer when bootstrapping, changing rules/permissions or confirming a transfer.
+        observed = self.status
+        if not previously_verified or observed is None or observed["hash"] != expected:
+            observed = await self.monitor.refresh(client)
         if (
             previously_verified
             and observed["hash"] == expected
@@ -253,12 +294,11 @@ class Runtime:
         await self.acls.reconcile(client, compiled.permissions, prune=False)
         if observed["hash"] != self.target_hash:
             await self.transfer(client, compiled.image)
-            observed = await self.read_status(client)
+            observed = await self.monitor.refresh(client)
         if observed["hash"] != self.target_hash:
             raise ReflexError("Device did not commit the expected rule hash")
         # Only remove obsolete permissions once the device confirms the rules.
         await self.acls.reconcile(client, compiled.permissions, prune=True)
-        self.status = observed
         self.last_sync = datetime.now(UTC)
         self.synced_permissions = compiled.permissions
         self.acl_synced = True

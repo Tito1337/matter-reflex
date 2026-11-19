@@ -5,6 +5,8 @@ project=$(cd -- "$(dirname -- "$0")" && pwd -P)
 idf_image=docker.io/espressif/idf:v5.5.4
 matter_image=docker.io/espressif/esp-matter@sha256:c4634244a189eebd315de90bf2719310d1de78da833952e3dcb61c384bebab24
 ha_image=localhost/matter-reflex-ha:2026.11.1
+# Matter Server 1.5.5, shared by the offline packet test and CI.
+controller_image=ghcr.io/matter-js/matterjs-server@sha256:52a3a08f99edafa742d356891515c52a98fc9ffeb9e60fdaca937005f93f3a10
 podman_cmd=(podman --cgroup-manager=cgroupfs)
 run=(run --rm -i --volume "$project:/work:z" --workdir /work)
 if [[ -t 0 && -t 1 ]]; then
@@ -54,11 +56,15 @@ case "$mode" in
         fi
         exec "${podman_cmd[@]}" "${run[@]}" --device "$device" --env "ESPPORT=$device" --env "ESPTOOL_PORT=$device" "$idf_image" bash -c 'cd /work && exec "$@"' bash "$@"
         ;;
+    test-lease)
+        exec "${podman_cmd[@]}" run --rm -i --network none --entrypoint node "$controller_image" \
+            --input-type=module < "$project/tests/contract/lease-exchange.mjs"
+        ;;
     ha)
         exec "${podman_cmd[@]}" "${run[@]}" --network none --entrypoint "" "$ha_image" "$@"
         ;;
     *)
-        echo "Usage: ./dev {matter|matter-usb|factory|idf|usb|ha} command [arguments...]" >&2
+        echo "Usage: ./dev {matter|matter-usb|factory|idf|usb|ha|test-lease} command [arguments...]" >&2
         exit 2
         ;;
 esac

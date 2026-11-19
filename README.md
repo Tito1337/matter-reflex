@@ -48,13 +48,17 @@ The board stores up to **32 gesture–target pairs**. A gesture that controls th
 
 ## How failover works
 
-- **While Home Assistant is available**, it renews the lease every 2.5 seconds by sending the Matter `OnWithTimedOff` command to endpoint 2. The XIAO stays subscribed to button events and ignores presses while the lease is valid.
+- **While Home Assistant is available**, it schedules a lease renewal every four seconds on a monotonic clock by invoking **Renew Reflex lease**, a named action on the XIAO (firmware 1.3.0, integration 0.5.1 or newer). The standard Matter `InstantAction` command renews a ten-second deadline held on the board. The XIAO stays subscribed to button events and ignores presses while the lease is valid.
 - **When the lease expires**, the XIAO uses its Matter sessions to send commands directly to the targets. The next lease renewal returns it to standby. The **Executions** counter includes failed commands. Each `RuleExecuted` event carries the individual result.
 - **When rules change**, Home Assistant compiles them, grants access to the required endpoints and verifies the fingerprint of the rule table saved in the board's nonvolatile memory. Home Assistant transfers the rules through development cluster `0xFFF1FC00` on endpoint 1. If Matter Server does not support that cluster, the integration uses HTTP over Thread IPv6 on port 5581, authenticated with HMAC-SHA256 and a single-use challenge. The board sends commands to the devices over Matter in either case. Avoid editing an endpoint's access control list during synchronization.
+
+Home Assistant listens for status changes through Matter Server’s existing subscription. It reads the board on connection and during rule synchronization. If the server exposes only some or none of the status changes, a five-minute check bounds how stale the display can become while the board is reachable. [Firmware and traffic details](firmware/README.md#lease-and-rule-execution)
 
 The lease measures whether Home Assistant can reach the XIAO. If an individual automation fails while Home Assistant continues renewing the lease, Home Assistant still handles that automation. A press during the interval between an outage and lease expiry can be lost. During recovery, both controllers may see the same press, so a command can execute twice.
 
 ## Hardware tests
+
+With integration 0.5.1 and firmware 1.3.0, the fixed four-second schedule averaged **48.6 packets per minute** between Home Assistant and the XIAO. The board stayed in standby through one missed renewal and took over after ten seconds of silence. [Traffic measurements and failover tests](docs/lease-measurements.md)
 
 The following observations come from a XIAO ESP32-C6 running firmware 1.1.0, integration 0.3.0, Home Assistant Core 2026.11.1 and Matter Server 9.3.0.
 

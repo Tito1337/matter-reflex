@@ -55,9 +55,16 @@ class ReflexConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._abort_if_unique_id_configured()
                 try:
                     async with asyncio.timeout(10):
-                        await native.probe(client, node.node_id)
-                except (ReflexError, InvalidArguments, InvalidCommand):
-                    return await self.async_step_fallback()
+                        use_action = await native.supports_lease_action(
+                            client, node.node_id
+                        )
+                        await native.renew(client, node.node_id, use_action)
+                        try:
+                            await native.probe(client, node.node_id)
+                        except (ReflexError, InvalidArguments, InvalidCommand):
+                            return await self.async_step_fallback()
+                except native.LeaseUnsupported:
+                    errors["base"] = "lease_unsupported"
                 except CHANNEL_ERRORS:
                     errors["base"] = "matter_unavailable"
                 else:

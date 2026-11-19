@@ -124,7 +124,7 @@ extern "C" void app_main() {
     auto *ep = esp_matter::endpoint::on_off_light_switch::create(node, &sw, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
     ESP_ERROR_CHECK(ep && esp_matter::endpoint::get_id(ep) == 1 ? ESP_OK : ESP_FAIL);
     reflex_runtime::create_cluster(ep);
-    // EP2 is a logical output. CHIP owns its OnTime countdown and reports.
+    // EP2 is a logical output. Only the legacy timed command starts a CHIP countdown.
     esp_matter::endpoint::on_off_plug_in_unit::config_t output;
     auto *inhibit = esp_matter::endpoint::on_off_plug_in_unit::create(node, &output, esp_matter::ENDPOINT_FLAG_NONE, nullptr);
     ESP_ERROR_CHECK(inhibit && esp_matter::endpoint::get_id(inhibit) == 2 ? ESP_OK : ESP_FAIL);
