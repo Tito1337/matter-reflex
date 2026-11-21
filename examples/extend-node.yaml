@@ -1,0 +1,58 @@
+# A Thread temperature sensor with Reflex and a user-defined Matter endpoint.
+packages:
+  reflex: !include reflex.yaml
+  management: !include encrypted-api.yaml
+
+substitutions:
+  reflex_source: ../components
+  reflex_api_key: !secret reflex_api_key
+
+esphome:
+  name: reflex-temperature
+
+esp32:
+  board: seeed_xiao_esp32c6
+  framework:
+    type: esp-idf
+
+logger:
+
+openthread:
+  tlv: !secret thread_tlv
+
+external_components:
+  - source: demo_components
+    components: [reflex_last_result]
+
+text_sensor:
+  - platform: reflex_last_result
+    reflex_id: reflex_controller
+    name: Last Reflex command
+    entity_category: diagnostic
+
+sensor:
+  - platform: internal_temperature
+    id: chip_temperature
+    name: Chip temperature
+
+matter:
+  product_id: 0x8000
+  endpoints:
+    3:
+      temperature_sensor: chip_temperature
+
+matter_reflex:
+  active:
+    id: reflex_active
+    internal: true
+    on_press:
+      - logger.log: "Handling fallback rules locally"
+  on_rule_result:
+    - if:
+        condition:
+          lambda: return status != 0;
+        then:
+          - logger.log:
+              level: WARN
+              format: "Rule %08lx failed for source event %llu (0x%03x)"
+              args: [rule_id, event_number, status]

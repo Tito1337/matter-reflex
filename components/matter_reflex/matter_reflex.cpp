@@ -104,7 +104,10 @@ void ReflexComponent::setup() {
         instance->defer([active]() { instance->active_sensor_->publish_state(active); });
     }, [](uint32_t rule, uint64_t event, uint16_t status) {
       // CHIP callbacks run under the stack lock. Run YAML actions on ESPHome's loop.
-      instance->defer([rule, event, status]() { instance->result_trigger_.trigger(rule, event, status); });
+      instance->defer([rule, event, status]() {
+        instance->result_trigger_.trigger(rule, event, status);
+        instance->result_callbacks_.call(rule, event, status);
+      });
     });
     initial_active = reflex_runtime::active();
     ESP_LOGI(TAG, "Node %016llx, rules hash %s",

@@ -24,6 +24,10 @@ class ReflexComponent : public Component {
 #ifdef USE_REFLEX_API_RULES
   void api_exchange(StringRef fabric, StringRef node, StringRef image, JsonObject reply);
 #endif
+  // Register during setup. Listeners run on the ESPHome main loop.
+  template<typename F> void add_on_rule_result_callback(F &&callback) {
+    result_callbacks_.add(std::forward<F>(callback));
+  }
   void setup() override;
   float get_setup_priority() const override { return setup_priority::LATE; }
 
@@ -31,6 +35,7 @@ class ReflexComponent : public Component {
   matter::MatterComponent *parent_{nullptr};
   binary_sensor::BinarySensor *active_sensor_{nullptr};
   Trigger<uint32_t, uint64_t, uint16_t> result_trigger_;
+  CallbackManager<void(uint32_t, uint64_t, uint16_t)> result_callbacks_;
   sensor::Sensor *ready_sensor_{nullptr};
   sensor::Sensor *required_sensor_{nullptr};
   void publish_readiness();

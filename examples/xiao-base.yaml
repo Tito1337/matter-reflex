@@ -1,11 +1,10 @@
-substitutions:
-  reflex_source: github://Tito1337/matter-reflex@esphome-v0.1.0
+packages:
+  reflex: !include reflex.yaml
 
 esphome:
-  min_version: 2026.11.0
   project:
     name: tito1337.matter_reflex
-    version: "0.1.0"
+    version: "0.2.0"
   name: matter-reflex
 
 esp32:
@@ -14,22 +13,12 @@ esp32:
   framework:
     type: esp-idf
 
-external_components:
-  - source: github://DavidvtWout/esphome-matter@547dbf85e029207b0fd01d198844002bd1f01a8c
-    components: [matter]
-  - source: ${reflex_source}
-    components: [matter_reflex]
-
 logger:
-
-network:
-  enable_ipv6: true
 
 openthread:
   device_type: FTD
 
 matter:
-  vendor_id: 0xFFF1
   product_id: 0x8000
 
 debug:
@@ -55,7 +44,6 @@ output:
       inverted: true
 
 matter_reflex:
-  id: reflex_controller
   ready_peers:
     name: Subscribed peers
   required_peers:

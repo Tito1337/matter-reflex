@@ -1,0 +1,21 @@
+# Add Reflex to a Thread node. The device configuration owns its board and pins.
+substitutions:
+  reflex_source: github://Tito1337/matter-reflex@esphome-v0.2.0
+
+esphome:
+  min_version: 2026.11.0
+
+network:
+  enable_ipv6: true
+
+external_components:
+  - source: github://DavidvtWout/esphome-matter@547dbf85e029207b0fd01d198844002bd1f01a8c
+    components: [matter]
+  - source: ${reflex_source}
+    components: [matter_reflex]
+
+matter:
+  vendor_id: 0xFFF1
+
+matter_reflex:
+  id: reflex_controller
