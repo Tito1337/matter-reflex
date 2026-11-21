@@ -2,9 +2,9 @@ name: ESP32-C6 firmware
 on:
   workflow_dispatch:
   push:
-    paths: ['firmware/**', 'dev', '.github/workflows/firmware.yml']
+    paths: ['components/matter_reflex/reflex_*', 'firmware/**', 'dev', '.github/workflows/firmware.yml']
   pull_request:
-    paths: ['firmware/**', 'dev', '.github/workflows/firmware.yml']
+    paths: ['components/matter_reflex/reflex_*', 'firmware/**', 'dev', '.github/workflows/firmware.yml']
 
 permissions:
   contents: read

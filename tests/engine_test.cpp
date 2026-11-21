@@ -1,4 +1,4 @@
-#include "../firmware/main/reflex_engine.h"
+#include "reflex_engine.h"
 #include <cassert>
 using namespace reflex;
 int main() {

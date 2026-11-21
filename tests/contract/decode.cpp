@@ -1,5 +1,5 @@
 // Read the image emitted by the integration, then resolve its four actions.
-#include "../../firmware/main/reflex_engine.h"
+#include "reflex_engine.h"
 #include <algorithm>
 #include <array>
 #include <cassert>

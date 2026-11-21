@@ -36,7 +36,7 @@ In Home Assistant, select the encrypted board in the Reflex transfer setup. For 
 
 ## Build the HTTP-compatible profile
 
-1. Use a checkout with working Git symlinks. The external component links to the same C++ sources that the standalone firmware builds.
+1. Clone the repository. The external component includes the shared C++ sources.
 2. Create `examples/secrets.yaml` with two quoted strings. Set `thread_tlv` to the active operational dataset of the test mesh and `reflex_transfer_key` to a new 64-digit hexadecimal key. Home Assistant uses that key for the authenticated rule-transfer fallback. Both values are embedded in the compiled image. [Obtaining the Thread dataset](../firmware/README.md#join-the-thread-network)
 3. From the repository root, build with the pinned ESPHome container and rootless Podman.
 

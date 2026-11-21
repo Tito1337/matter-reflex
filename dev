@@ -33,7 +33,6 @@ case "$mode" in
             --volume "$project/examples:/config/examples:z" \
             --volume "$project/components:/config/components:ro,z" \
             --volume "$project/firmware/partitions.csv:/config/firmware/partitions.csv:ro,z" \
-            --volume "$project/firmware/main:/config/firmware/main:ro,z" \
             --volume reflex-esphome-cache:/cache --workdir /config \
             ghcr.io/esphome/esphome:2026.11.0 "$@"
         ;;
