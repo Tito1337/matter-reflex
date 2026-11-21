@@ -4,7 +4,32 @@ The Python compiler decides whether Home Assistant can delegate an entire automa
 
 Write documentation, source comments, command-line messages and examples in English. Home Assistant interface translations belong in `custom_components/matter_reflex/translations/`.
 
-## Checking a change
+## Start with the ESPHome example
+
+From a Linux checkout with Bash and rootless Podman, validate the [example node](examples/extend-node.yaml) and its downstream text sensor. The helper pulls the pinned toolchain on first use, generates disposable credentials and cleans up its temporary build. You can run it without a board or access to a household Thread network.
+
+```sh
+tools/check-esphome
+tools/check-esphome compile extend-node
+```
+
+To test a XIAO layout, replace `extend-node` with `xiao-esp32c6-ota` or `xiao-esp32c6-existing-ota`. For a build you intend to flash, use your own secrets and the [installation guide](examples/README.md). To add Reflex to a project of your own, follow the [component guide](docs/esphome-component.md).
+
+## Where to make a change
+
+| Change | Start here |
+| --- | --- |
+| YAML settings, diagnostics or callbacks | [ESPHome schema and code generation](components/matter_reflex/__init__.py) and [C++ adapter](components/matter_reflex/matter_reflex.cpp) |
+| New board or a component consuming Reflex events | [Board-independent package](examples/reflex.yaml) and [downstream text sensor](examples/demo_components/reflex_last_result/) |
+| Gesture handling and command results | [Rule engine](components/matter_reflex/reflex_engine.cpp), [peer connections](components/matter_reflex/reflex_peers.cpp) and [Matter runtime](components/matter_reflex/reflex_runtime.cpp) |
+| Supported HA automations, permissions or lease renewal | [Compiler](custom_components/matter_reflex/compiler.py), [ACL handling](custom_components/matter_reflex/acl.py) and [HA runtime](custom_components/matter_reflex/runtime.py) |
+| Rule format shared by Python and C++ | [Wire format](custom_components/matter_reflex/wire.py) and [contract tests](tests/contract/) |
+
+Send feature and bug-fix pull requests to `main`. ESPHome is the firmware development path. To reproduce the last standalone baseline in a separate checkout, run `git worktree add --detach ../matter-reflex-standalone standalone-v1.3.0`.
+
+The standalone build remains available during migration. Before retiring it, record a fresh XIAO commissioning, an encrypted OTA update over Thread that preserves the same node and rules, and a physical button controlling its target during a Matter Server outage on that installation. [Hardware procedure and observations](examples/README.md#thread-ota)
+
+## Check the integration and shared engine
 
 From a Linux checkout with rootless Podman, build the Home Assistant test image first. You can run the software tests without a USB board, a Home Assistant instance, or Thread credentials.
 
@@ -32,7 +57,7 @@ If you change the firmware or SDK, also build the application for the microcontr
 
 The [software checks](.github/workflows/checks.yml) run on pushes and pull requests. The [ESP32-C6 build](.github/workflows/firmware.yml) runs when the firmware, its launcher, or its workflow changes. You can also run either workflow manually on GitHub.
 
-The [ESPHome firmware check](.github/workflows/esphome.yml) also compiles both Thread OTA layouts with disposable credentials on a fresh runner. For local builds and the hardware verification sequence see the [XIAO profiles](examples/README.md).
+The [ESPHome firmware check](.github/workflows/esphome.yml) compiles the downstream component example and both Thread OTA layouts with disposable credentials. For local builds and the hardware verification sequence see the [XIAO profiles](examples/README.md).
 
 ## Adding a Matter target
 

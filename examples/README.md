@@ -2,15 +2,17 @@
 
 The [board configuration](xiao-esp32c6.yaml) uses ESPHome 2026.11.0 and pins the community Matter component to a Git revision. ESPHome owns Thread and commissioning. The local `matter_reflex` component registers endpoints 1 and 2, runs the shared firmware engine, and receives the four-second lease renewals through Matter Server. Home Assistant still compiles the labeled automations and grants the board access to the peers.
 
+For a board that already runs ESPHome, [add Reflex to your existing node](../docs/esphome-component.md). The board-independent package lets you choose the sensors, GPIOs and endpoints.
+
 ## Install as an ESPHome package
 
-In your Device Builder configuration, import the released board package and set your own device name and secrets locally. This example is for a fresh board. For a commissioned standalone board follow the migration instructions below.
+In your Device Builder configuration, import the tagged board package and set your own device name and secrets locally. This example is for a fresh board. For a commissioned standalone board follow the migration instructions below.
 
 ```yaml
 packages:
-  reflex: github://Tito1337/matter-reflex/examples/xiao-base.yaml@esphome-v0.1.0
-  management: github://Tito1337/matter-reflex/examples/encrypted-api.yaml@esphome-v0.1.0
-  updates: github://Tito1337/matter-reflex/examples/ota.yaml@esphome-v0.1.0
+  reflex: github://Tito1337/matter-reflex/examples/xiao-base.yaml@esphome-v0.2.0
+  management: github://Tito1337/matter-reflex/examples/encrypted-api.yaml@esphome-v0.2.0
+  updates: github://Tito1337/matter-reflex/examples/ota.yaml@esphome-v0.2.0
 
 substitutions:
   reflex_api_key: !secret reflex_api_key

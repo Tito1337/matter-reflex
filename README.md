@@ -2,7 +2,7 @@
 
 Keep a Matter button working when Home Assistant or its Matter Server goes offline. Matter Reflex pairs a Home Assistant integration with a **Seeed Studio XIAO ESP32-C6** on your Thread network. Add the `reflex` label to a supported automation and the board stores its rules. If Home Assistant stops renewing a ten-second lease, the board can send commands directly to your lights, plugs and shades.
 
-[ESPHome XIAO installation](examples/README.md) · [Quick start](docs/quickstart.en.md) · [Firmware setup](firmware/README.md) · [Troubleshooting](docs/troubleshooting.md) · [Contributing](CONTRIBUTING.md)
+[Install on a XIAO](examples/README.md) · [Extend your ESPHome node](docs/esphome-component.md) · [Home Assistant quick start](docs/quickstart.en.md) · [Troubleshooting](docs/troubleshooting.md) · [Contributing](CONTRIBUTING.md)
 
 ## Your first automation
 
@@ -41,7 +41,7 @@ The board stores up to **32 gesture–target pairs**. A gesture that controls th
 
 ## Installation
 
-1. Prepare Home Assistant with Matter, a working Thread network and border router, a XIAO ESP32-C6 and a USB data cable. The build instructions use Linux with rootless Podman.
+1. Prepare Home Assistant with Matter, a working Thread network and border router, a XIAO ESP32-C6 and a USB data cable. Use ESPHome Device Builder or the pinned Linux build container.
 2. Install the [ESPHome XIAO package](examples/README.md) and commission the board on-network. The package supports local takeover indication, per-rule logging, peer diagnostics and encrypted management and updates over Thread. For an existing standalone board, follow the commissioning-preserving USB migration in the same guide. The [standalone firmware guide](firmware/README.md) covers the original build and recovery.
 3. Copy the [matter_reflex integration directory](custom_components/matter_reflex) into `config/custom_components/`. Check your Home Assistant configuration and restart Core. Under **Settings → Devices & services**, add **Matter Reflex** and select your board. If prompted for a rules transport, select the encrypted ESPHome board or enter its provisioned HTTP transfer key.
 4. Try the double press above. During normal operation, **Synchronized** is on, **Active** is off, and Home Assistant controls the lamp.
@@ -50,7 +50,7 @@ The board stores up to **32 gesture–target pairs**. A gesture that controls th
 
 - **While Home Assistant is available**, it schedules a lease renewal every four seconds on a monotonic clock by invoking **Renew Reflex lease**, a named action on the XIAO (firmware 1.3.0, integration 0.5.1 or newer). The standard Matter `InstantAction` command renews a ten-second deadline held on the board. The XIAO stays subscribed to button events and ignores presses while the lease is valid.
 - **When the lease expires**, the XIAO uses its Matter sessions to send commands directly to the targets. The next lease renewal returns it to standby. The **Executions** counter includes failed commands. Each `RuleExecuted` event carries the individual result.
-- **When rules change**, Home Assistant compiles them, grants access to the required endpoints and verifies the fingerprint of the rule table saved in the board's nonvolatile memory. Home Assistant transfers the rules through development cluster `0xFFF1FC00` on endpoint 1. If Matter Server does not support that cluster, the integration uses HTTP over Thread IPv6 on port 5581, authenticated with HMAC-SHA256 and a single-use challenge. The board sends commands to the devices over Matter in either case. Avoid editing an endpoint's access control list during synchronization.
+- **When rules change**, Home Assistant compiles them, grants access to the required endpoints and verifies the fingerprint of the rule table saved in the board's nonvolatile memory. Home Assistant transfers the rules through development cluster `0xFFF1FC00` on endpoint 1. When Matter Server lacks that cluster, the integration can use the encrypted ESPHome API or authenticated HTTP over Thread IPv6 on port 5581. The board sends commands to the devices over Matter in either case. Avoid editing an endpoint's access control list during synchronization.
 
 Home Assistant listens for status changes through Matter Server’s existing subscription. It reads the board on connection and during rule synchronization. If the server exposes only some or none of the status changes, a five-minute check bounds how stale the display can become while the board is reachable. [Firmware and traffic details](firmware/README.md#lease-and-rule-execution)
 
@@ -68,11 +68,11 @@ The following observations come from a XIAO ESP32-C6 running firmware 1.1.0, int
 | Six gestures on one BILRESA | With Matter Server stopped and the Matter integration suspended, the six gestures controlled a GRILLPLATS plug, two lights and a Zemismart shade. The shade opened to 75% and closed. The counter recorded nine results during the sequence. A tenth appeared during recovery and could not be attributed to a particular gesture. |
 | XIAO restart and Home Assistant recovery | The board rejoined Thread, restored its rules and returned to standby when Home Assistant renewed the lease. |
 
-To repeat an outage test, read the counter over USB and confirm `active=1` before pressing the button. Home Assistant can restart Matter Server automatically. Watch the physical target, then verify that the board reports `active=0` after recovery. Precise latency and behavior after simultaneous loss of the border router and Matter sessions still need measurement.
+To repeat an outage test, record the execution counter and wait for the XIAO takeover LED or the ESPHome USB log message `Lease state: active` before pressing the button. Home Assistant can restart Matter Server automatically. Watch the physical target, then verify that the board reports standby after recovery. Precise latency and behavior after simultaneous loss of the border router and Matter sessions still need measurement.
 
 ## Development
 
-The ESPHome component and standalone application share the same C++ rule engine and Home Assistant integration. Both receive their lease through Matter.
+Develop firmware on `main` as an ESPHome external component. The [extension example](examples/extend-node.yaml) shows how to keep your own sensors and Matter endpoints alongside Reflex. The last standalone baseline is tagged `standalone-v1.3.0`.
 
 The [contribution guide](CONTRIBUTING.md) covers the Python tests, the binary contract test with the C++ engine, and the target firmware build from a fresh clone. The [Home Assistant compiler](custom_components/matter_reflex/compiler.py) defines which automations Reflex accepts. The [firmware engine](components/matter_reflex/reflex_engine.cpp) decodes those rules. The [tests](tests/) cover the shared format, Matter permissions and engine behavior.
 

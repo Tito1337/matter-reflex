@@ -5,7 +5,7 @@ body:
     id: versions
     attributes:
       label: Versions and devices
-      description: Include the integration, firmware, Home Assistant Core and Matter Server versions you know. For a gesture, add the button and target models.
+      description: Include the ESPHome version, Reflex package or profile, board, integration, Home Assistant Core and Matter Server versions you know. For a gesture, add the button and target models.
     validations:
       required: true
   - type: textarea
