@@ -11,6 +11,8 @@ from esphome.components.esp32 import add_idf_sdkconfig_option, include_builtin_i
 from esphome.components.matter.types import MatterComponent
 from esphome.components.network import require_ipv4
 from esphome.const import CONF_ID
+from esphome.core import CORE
+from esphome.coroutine import CoroPriority, coroutine_with_priority
 
 DOMAIN = "matter_reflex"
 AUTO_LOAD = ["binary_sensor", "sensor"]
@@ -57,6 +59,14 @@ def final_validate(config):
 FINAL_VALIDATE_SCHEMA = final_validate
 
 
+@coroutine_with_priority(CoroPriority.FINAL)
+async def enable_reflex_clusters():
+    # The Matter component selects clusters after it resolves the user's endpoints.
+    # Reflex registers endpoints in C++, so add their clusters after that selection.
+    for cluster in ("ACTIONS", "ON_OFF", "GROUPS", "IDENTIFY"):
+        add_idf_sdkconfig_option(f"CONFIG_SUPPORT_{cluster}_CLUSTER", True)
+
+
 async def to_code(config):
     component = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(component, config)
@@ -79,8 +89,7 @@ async def to_code(config):
         )
     parent = await cg.get_variable(config["matter_id"])
     cg.add(component.register_endpoints(parent))
-    for cluster in ("ACTIONS", "ON_OFF", "GROUPS", "IDENTIFY"):
-        add_idf_sdkconfig_option(f"CONFIG_SUPPORT_{cluster}_CLUSTER", True)
+    CORE.add_job(enable_reflex_clusters)
     add_idf_sdkconfig_option("CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER", True)
     add_idf_sdkconfig_option("CONFIG_CHIP_TASK_STACK_SIZE", 12288)
     cg.add_cmake_arg("PROJECT_VER_NUMBER", "5")
