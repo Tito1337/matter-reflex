@@ -57,5 +57,5 @@ matter_reflex:
       - output.turn_off: reflex_indicator
   on_rule_result:
     - logger.log:
-        format: "Rule %08lx, source event %llu, status 0x%03x"
-        args: [rule_id, event_number, status]
+        format: "Rule %08lx, source event %llu, status 0x%03x at boot %lu ms"
+        args: [rule_id, event_number, status, "static_cast<unsigned long>(millis())"]

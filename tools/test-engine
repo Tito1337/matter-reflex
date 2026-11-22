@@ -5,7 +5,7 @@ cd -- "$(dirname -- "$0")/.."
 build_dir=$(mktemp -d)
 trap 'rm -rf -- "$build_dir"' EXIT
 flags=(-Icomponents/matter_reflex -std=c++17 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all)
-for source in tests/engine_test.cpp tests/contract/decode.cpp; do
+for source in tests/engine_test.cpp tests/peer_cache_test.cpp tests/contract/decode.cpp; do
     g++ "${flags[@]}" components/matter_reflex/reflex_engine.cpp "$source" -o "$build_dir/test"
     "$build_dir/test"
 done

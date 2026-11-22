@@ -8,7 +8,7 @@
 | An open door or wet leak detector has no effect on takeover | Check peer readiness. A sensor’s first valid report establishes its baseline. A new transition into the configured state after takeover triggers the command. |
 | A press during an outage does nothing | Wait for the XIAO takeover LED or `Lease state: active` in the ESPHome USB log before pressing the button. Look for a rule result in the log. If the server recovered automatically, it may have renewed the lease. |
 | The counter increases, but the target does not respond | The counter includes failed executions and counts each target’s rule separately. Check the `RuleExecuted` status if your controller exposes it. Local status codes `0x100`, `0x101`, and `0x102` indicate a missing session, an unknown state, and a transport error, respectively. |
-| The XIAO is slow to take over after losing radio connectivity | The firmware keeps sessions and the peer address in RAM. After a restart or loss of a route, reconnection depends on Thread connectivity and the discovery services that are still available. |
+| The XIAO is slow to take over after losing radio connectivity | Check Thread attachment and the peer subscription log. After one confirmed subscription the XIAO can reconnect directly to the saved IPv6 endpoint while discovery is offline. The button and its target each need a working mesh route and a fresh subscription. If an address changed, discovery must find it again. |
 
 ## Loading an integration update
 

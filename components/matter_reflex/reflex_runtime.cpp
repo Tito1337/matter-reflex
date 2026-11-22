@@ -123,7 +123,7 @@ void select_fabric() {
         rules = candidate;
         memcpy(digest, hex, sizeof(digest));
     }
-    reflex_peers::configure(index, rules);
+    reflex_peers::configure(index, rules, storage);
     changed(Hash);
 }
 
@@ -345,7 +345,7 @@ bool replace_image(const uint8_t *data, size_t size) {
     rules = candidate;
     journal_count = journal_write = 0;
     memcpy(digest, hex, sizeof(digest));
-    reflex_peers::configure(fabric_index, rules);
+    reflex_peers::configure(fabric_index, rules, storage);
     changed(Hash);
     return true;
 }

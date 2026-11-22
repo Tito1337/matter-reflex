@@ -7,7 +7,11 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
 from esphome.components import binary_sensor, sensor
-from esphome.components.esp32 import add_idf_sdkconfig_option, include_builtin_idf_component
+from esphome.components.esp32 import (
+    add_idf_sdkconfig_option,
+    add_src_cmake,
+    include_builtin_idf_component,
+)
 from esphome.components.matter.types import MatterComponent
 from esphome.components.network import require_ipv4
 from esphome.const import CONF_ID
@@ -93,6 +97,10 @@ async def to_code(config):
     add_idf_sdkconfig_option("CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER", True)
     add_idf_sdkconfig_option("CONFIG_CHIP_TASK_STACK_SIZE", 12288)
     cg.add_cmake_arg("PROJECT_VER_NUMBER", "5")
+    add_src_cmake(
+        'target_link_options(${COMPONENT_LIB} PUBLIC '
+        '"-Wl,--wrap=_ZN4chip18CASESessionManager4InitEPNS_6System5LayerERKNS_24CASESessionManagerConfigE")'
+    )
     include_builtin_idf_component("esp_http_server")
     if "transfer_key" in config:
         cg.add(component.set_transfer_key(config["transfer_key"]))

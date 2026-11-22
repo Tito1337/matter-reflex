@@ -225,7 +225,20 @@ number, and command status, respectively. Local status codes include `0x100`
 for a missing session, `0x101` for an unknown device state, and `0x102` for
 a transport error.
 
-If the Thread border router goes offline, the XIAO can still use active CASE
-sessions and each peer's last authenticated address. It keeps these addresses
-in RAM. If both the cache and Thread discovery are unavailable, reconnection
-depends on which services are still available on the mesh.
+The XIAO learns each peer’s IPv6 address and UDP port from an authenticated
+subscription response. Later reports refresh the address if the peer moves.
+The XIAO writes a routable endpoint to NVS only when it is first learned or
+changes. Each record belongs to the current fabric, XIAO node and peer.
+
+On reboot, after Thread attaches, the XIAO opens a Matter CASE session
+directly at the saved endpoint and subscribes again. This works while Thread
+DNS-SD is still starting, provided the saved address has a working mesh
+route. Some addresses depend on a prefix advertised by the border router.
+A failed cached connection gives discovery a full attempt to find a new
+address. If the XIAO runs out of session slots, it retries the same method.
+The button and its target must both be ready before a fresh press can act.
+
+The offline Matter network test (`./dev test-sensors`) drops DNS-SD traffic,
+clears both peers’ sessions and discovered addresses, and loads their saved
+endpoints through the firmware cache code. The simulated controller
+establishes fresh CASE sessions and subscriptions before commanding the lamp.

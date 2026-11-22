@@ -1,6 +1,8 @@
 #include "reflex_peers.h"
 #include "reflex_runtime.h"
+#include "reflex_peer_cache.h"
 
+#include <app/CASEClientPool.h>
 #include <app/CASESessionManager.h>
 #include <app/InteractionModelEngine.h>
 #include <app/ReadClient.h>
@@ -11,21 +13,68 @@
 #include <clusters/WindowCovering/AttributeIds.h>
 #include <clusters/WindowCovering/Commands.h>
 #include <controller/InvokeInteraction.h>
+#include <platform/ConnectivityManager.h>
 #include <transport/SecureSession.h>
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <memory>
 #include <new>
+
+// CHIP exposes the server's CASE manager but no accessor for its client
+// parameters. Observe its successful Init so cached connections use the same
+// validation policy and providers, including application overrides.
+namespace {
+chip::CASEClientInitParams server_case_params;
+}
+extern "C" CHIP_ERROR real_case_init(chip::CASESessionManager *, chip::System::Layer *,
+                                    const chip::CASESessionManagerConfig &) asm("__real__ZN4chip18CASESessionManager4InitEPNS_6System5LayerERKNS_24CASESessionManagerConfigE");
+extern "C" CHIP_ERROR wrap_case_init(chip::CASESessionManager *, chip::System::Layer *,
+                                    const chip::CASESessionManagerConfig &) asm("__wrap__ZN4chip18CASESessionManager4InitEPNS_6System5LayerERKNS_24CASESessionManagerConfigE");
+extern "C" CHIP_ERROR wrap_case_init(chip::CASESessionManager *manager, chip::System::Layer *layer,
+                                    const chip::CASESessionManagerConfig &config) {
+    const auto error = real_case_init(manager, layer, config);
+    if (manager == chip::Server::GetInstance().GetCASESessionManager())
+        server_case_params = error == CHIP_NO_ERROR ? config.sessionInitParams : chip::CASEClientInitParams{};
+    return error;
+}
 
 namespace reflex_peers {
 using namespace chip;
 using namespace chip::app;
 namespace {
+CASEClientPool<CHIP_CONFIG_DEVICE_MAX_ACTIVE_CASE_CLIENTS> direct_clients;
+struct ReleaseCASEClient {
+    void operator()(CASEClient *client) const { direct_clients.Release(client); }
+};
 constexpr int64_t kSecond = 1000000;
 constexpr uint16_t kNoSession = 0x100, kUnknownState = 0x101, kTransportError = 0x102;
 FabricIndex fabric;
+nvs_handle_t peer_storage;
+reflex::PeerAddressCache address_cache;
+
+void slot_key(size_t slot, char (&key)[12]) {
+    std::snprintf(key, sizeof(key), "peer1_%u", static_cast<unsigned>(slot));
+}
+
+bool read_endpoint(size_t slot, reflex::PeerRecord &record) {
+    char key[12];
+    slot_key(slot, key);
+    size_t size = reflex::kPeerRecordSize;
+    return nvs_get_blob(peer_storage, key, &record, &size) == ESP_OK && size == reflex::kPeerRecordSize;
+}
+
+bool write_endpoint(size_t slot, const reflex::PeerRecord &record) {
+    char key[12];
+    slot_key(slot, key);
+    auto error = nvs_set_blob(peer_storage, key, &record, reflex::kPeerRecordSize);
+    if (error == ESP_OK) error = nvs_commit(peer_storage);
+    if (error != ESP_OK) ESP_LOGW("reflex", "Peer address cache write failed: %s", esp_err_to_name(error));
+    return error == ESP_OK;
+}
+
 uint32_t generation;
 void (*subscription_listener)(uint64_t);
 const reflex::Rules *rule_set;
@@ -73,7 +122,7 @@ int32_t measurement(ClusterId cluster, TLV::TLVReader *reader, const StatusIB &s
     return reflex::kInvalidMeasurement;
 }
 
-class Peer : public ReadClient::Callback {
+class Peer : public ReadClient::Callback, public SessionEstablishmentDelegate {
 public:
     NodeId node = 0;
     bool direct_buttons = false;
@@ -81,7 +130,19 @@ public:
     std::array<bool, 4> sensors{};
     static constexpr std::array<ClusterId, 4> sensor_clusters{0x45, 0x406, 0x402, 0x405};
     SessionHolder session;
+    void restore_address() {
+        if (const auto *endpoint = address_cache.lookup(node)) {
+            const uint8_t *bytes = endpoint->ip.data();
+            Inet::IPAddress ip;
+            Inet::IPAddress::ReadAddress(bytes, ip);
+            AddressResolve::ResolveResult hint;
+            hint.address = Transport::PeerAddress::UDP(ip, endpoint->port);
+            cached_address.SetValue(hint);
+        }
+    }
+
     void reset() {
+        direct_client.reset();
         on_connected.Cancel();
         on_failure.Cancel();
         reader.reset();
@@ -94,21 +155,16 @@ public:
         retry_at = 0;
         backoff = 1;
     }
-    void maintain() {
-        if (reader) {
-            auto handle = session.Get();
-            // CHIP can mark CASE defunct after an invoke times out while the
-            // read client still waits for the next subscription report.
-            if (!handle.HasValue() || !handle.Value()->IsActiveSession()) disconnect();
-        }
-        if (reader || connecting || esp_timer_get_time() < retry_at) return;
+    bool has_active_session() const { return session && session->IsActiveSession(); }
+    void maintain(bool attached) {
+        // CASE can become defunct while the subscription still awaits a report.
+        if (reader && !has_active_session()) disconnect();
+        if (!attached || reader || connecting || esp_timer_get_time() < retry_at) return;
         connecting = true;
-        Server::GetInstance().GetCASESessionManager()->FindOrEstablishSession(
-            ScopedNodeId(node, fabric), &on_connected, &on_failure,
-#if CHIP_DEVICE_CONFIG_ENABLE_AUTOMATIC_CASE_RETRIES
-            1, nullptr,
-#endif
-            TransportPayloadCapability::kMRPPayload, cached_address);
+        attempts.start(cached_address.HasValue() && server_case_params.sessionManager, [this] { connect_direct(); }, [this] {
+            Server::GetInstance().GetCASESessionManager()->FindOrEstablishSession(
+                ScopedNodeId(node, fabric), &on_connected, &on_failure);
+        });
     }
     void OnAttributeData(const ConcreteDataAttributePath &p, TLV::TLVReader *r, const StatusIB &s) override {
         if (p.mAttributeId != 0) return;
@@ -156,14 +212,19 @@ public:
     void OnEventData(const EventHeader &, TLV::TLVReader *, const StatusIB *) override;
     void OnSubscriptionEstablished(SubscriptionId) override {
         established = true;
+        attempts.confirmed();
+        remember_report_address();
         backoff = 1;
         if (subscription_listener) subscription_listener(node);
     }
+    void NotifySubscriptionStillActive(const ReadClient &) override { remember_report_address(); }
     void OnDone(ReadClient *) override { disconnect(); }
 private:
     std::unique_ptr<ReadClient> reader;
     Optional<EventNumber> high_water;
     Optional<AddressResolve::ResolveResult> cached_address;
+    reflex::PeerConnectionAttempts attempts;
+    std::unique_ptr<CASEClient, ReleaseCASEClient> direct_client;
     int64_t retry_at = 0;
     unsigned backoff = 1;
     void disconnect() {
@@ -174,17 +235,63 @@ private:
         retry_at = esp_timer_get_time() + backoff * kSecond;
         backoff = std::min(backoff * 2, 30u);
     }
+    void connect_direct() {
+        auto &server = Server::GetInstance();
+        const ScopedNodeId peer(node, fabric);
+        auto existing = server.GetSecureSessionManager().FindSecureSessionForNode(
+            peer, MakeOptional(Transport::SecureSession::Type::kCASE));
+        if (existing.HasValue()) {
+            connected(this, server.GetExchangeManager(), existing.Value());
+            return;
+        }
+        // The address is already known. CASEClient sends Sigma1 directly, even
+        // when Thread DNS-SD is still waiting for its SRP server to initialize.
+        direct_client.reset(direct_clients.Allocate());
+        if (!direct_client || server.GetExchangeManager().GetNumActiveExchanges() >= CHIP_CONFIG_MAX_EXCHANGE_CONTEXTS) {
+            connection_failed(CHIP_ERROR_NO_MEMORY);
+            return;
+        }
+        const auto &hint = cached_address.Value();
+        auto err = direct_client->EstablishSession(server_case_params, peer, hint.address, hint.mrpRemoteConfig, this);
+        if (err != CHIP_NO_ERROR) connection_failed(err);
+    }
+    void remember_report_address() {
+        // ReadClient accepts reports on any CASE session with the publisher. CHIP
+        // stamps the receiving session immediately before synchronous dispatch under
+        // the stack lock. Skip ambiguous timestamps, including same-tick rotation.
+        const ScopedNodeId peer(node, fabric);
+        reflex::LatestPeerRx<Transport::SecureSession> received;
+        Server::GetInstance().GetSecureSessionManager().ForEachMatchingSession(peer, [&](auto *secure) {
+            if (secure->IsCASESession())
+                received.observe(secure, secure->GetLastPeerActivityTime().count());
+        });
+        auto *secure = received.session();
+        if (!secure || secure->GetLocalScopedNodeId().GetNodeId() != reflex_runtime::self_node()) return;
+        const auto &address = secure->GetPeerAddress();
+        if (address.GetTransportType() != Transport::Type::kUdp) return;
+        reflex::PeerEndpoint endpoint{};
+        uint8_t *bytes = endpoint.ip.data();
+        address.GetIPAddress().WriteAddress(bytes);
+        endpoint.port = address.GetPort();
+        AddressResolve::ResolveResult hint;
+        hint.address = address;
+        hint.mrpRemoteConfig = secure->GetRemoteMRPConfig();
+        cached_address.SetValue(hint);
+        address_cache.remember(node, endpoint, write_endpoint);
+    }
+    void OnSessionEstablished(const SessionHandle &handle) override {
+        direct_client.reset();
+        connected(this, Server::GetInstance().GetExchangeManager(), handle);
+    }
+    void OnSessionEstablishmentError(CHIP_ERROR err, SessionEstablishmentStage) override { connection_failed(err); }
+    void connection_failed(CHIP_ERROR err) {
+        direct_client.reset();
+        attempts.failed(err == CHIP_ERROR_NO_MEMORY);
+        disconnect();
+    }
     static void connected(void *ctx, Messaging::ExchangeManager &mgr, const SessionHandle &handle) {
         auto &p = *static_cast<Peer *>(ctx);
         p.connecting = false;
-        // CHIP retries CASE at this authenticated Thread peer address if DNS-SD
-        // resolution fails after loss of the border router. Store no fabric secrets.
-        if (auto *secure = handle->AsSecureSession()) {
-            AddressResolve::ResolveResult last;
-            last.address = secure->GetPeerAddress();
-            last.mrpRemoteConfig = secure->GetRemoteMRPConfig();
-            p.cached_address.SetValue(last);
-        }
         p.reader.reset(new (std::nothrow) ReadClient(InteractionModelEngine::GetInstance(), &mgr, p,
                                                     ReadClient::InteractionType::Subscribe));
         if (!p.reader || !p.session.Grab(handle)) { p.disconnect(); return; }
@@ -223,7 +330,9 @@ private:
         req.mKeepSubscriptions = false;
         if (p.reader->SendRequest(req) != CHIP_NO_ERROR) p.disconnect();
     }
-    static void failed(void *ctx, const ScopedNodeId &, CHIP_ERROR) { static_cast<Peer *>(ctx)->disconnect(); }
+    static void failed(void *ctx, const ScopedNodeId &, CHIP_ERROR error) {
+        static_cast<Peer *>(ctx)->connection_failed(error);
+    }
     chip::Callback::Callback<OnDeviceConnected> on_connected{connected, this};
     chip::Callback::Callback<OnDeviceConnectionFailure> on_failure{failed, this};
 };
@@ -241,7 +350,10 @@ Peer *ensure(NodeId node) {
     for (auto &p : peers) {
         if (!p) {
             p.reset(new (std::nothrow) Peer);
-            if (p) p->node = node;
+            if (p) {
+                p->node = node;
+                p->restore_address();
+            }
             return p.get();
         }
     }
@@ -365,7 +477,7 @@ void set_subscription_listener(void (*listener)(uint64_t)) {
     subscription_listener = listener;
 }
 
-void configure(FabricIndex index, const reflex::Rules &rules) {
+void configure(FabricIndex index, const reflex::Rules &rules, nvs_handle_t storage) {
     ++generation;
     for (auto &p : peers) if (p) { p->reset(); p.reset(); }
     fabric = index;
@@ -377,7 +489,10 @@ void configure(FabricIndex index, const reflex::Rules &rules) {
         *end++ = rules.rows[i].target;
     }
     std::sort(nodes.begin(), end);
-    required_peers = std::unique(nodes.begin(), end) - nodes.begin();
+    end = std::unique(nodes.begin(), end);
+    required_peers = end - nodes.begin();
+    peer_storage = storage;
+    address_cache.load(reflex_runtime::fabric_id(), reflex_runtime::self_node(), nodes.begin(), end, read_endpoint);
     for (size_t i = 0; i < rules.count; ++i) {
         states[i] = {-1, -1};
         sensor_states[i] = {};
@@ -386,13 +501,13 @@ void configure(FabricIndex index, const reflex::Rules &rules) {
 }
 uint32_t direct_ready_mask() {
     uint32_t mask = 0;
-    if (!rule_set) return mask;
+    if (!rule_set || !DeviceLayer::ConnectivityMgr().IsThreadAttached()) return mask;
     for (size_t i = 0; i < rule_set->count; ++i) {
         const auto &rule = rule_set->rows[i];
         if (!rule.direct) continue;
         const auto *source = find(rule.source);
         const bool path_ready = reflex::sensor_cluster(rule.event) ? sensor_states[i].previous != -1 : button_path_ready[i];
-        if (source && source->established && path_ready)
+        if (source && source->established && source->has_active_session() && path_ready)
             mask |= uint32_t(1) << i;
     }
     return mask;
@@ -400,13 +515,16 @@ uint32_t direct_ready_mask() {
 
 Readiness readiness() {
     unsigned ready = 0;
-    for (const auto &peer : peers)
-        if (peer && peer->established) ++ready;
+    if (required_peers && DeviceLayer::ConnectivityMgr().IsThreadAttached()) {
+        for (const auto &peer : peers)
+            if (peer && peer->established && peer->has_active_session()) ++ready;
+    }
     return {ready, required_peers};
 }
 
 void tick() {
     if (!fabric || !rule_set) return;
+    const bool attached = DeviceLayer::ConnectivityMgr().IsThreadAttached();
     for (size_t i = 0; i < rule_set->count; ++i) {
         const auto &rule = rule_set->rows[i];
         if (auto *p = ensure(rule.source)) {
@@ -425,6 +543,6 @@ void tick() {
             }
         }
     }
-    for (auto &peer : peers) if (peer) peer->maintain();
+    for (auto &peer : peers) if (peer) peer->maintain(attached);
 }
 } // namespace reflex_peers

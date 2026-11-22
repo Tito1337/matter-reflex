@@ -1,10 +1,11 @@
 #pragma once
 #include "reflex_engine.h"
 #include <lib/core/DataModelTypes.h>
+#include <nvs.h>
 
 namespace reflex_peers {
 // Called under CHIP lock, including subscription and invocation callbacks.
-void configure(chip::FabricIndex fabric, const reflex::Rules &rules);
+void configure(chip::FabricIndex fabric, const reflex::Rules &rules, nvs_handle_t storage);
 struct Readiness { unsigned ready, total; };
 Readiness readiness();
 uint32_t direct_ready_mask();

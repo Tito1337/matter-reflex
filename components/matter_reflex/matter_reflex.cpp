@@ -6,6 +6,8 @@
 #include "esphome/core/log.h"
 #include <esp_matter_providers.h>
 #include <esp_heap_caps.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 #include <platform/ESP32/ConfigurationManagerImpl.h>
 #include <platform/internal/GenericDeviceInstanceInfoProvider.h>
 #include <lib/support/SafeString.h>
@@ -13,6 +15,7 @@
 namespace esphome::matter_reflex {
 namespace {
 constexpr char TAG[] = "matter_reflex";
+unsigned long long boot_ms() { return esp_timer_get_time() / 1000; }
 ReflexComponent *instance;  // One Reflex endpoint set per Matter node.
 
 // HA verifies BasicInformation.ProductName before it accepts the lease endpoint.
@@ -101,13 +104,13 @@ void ReflexComponent::setup() {
   {
     esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
     reflex_peers::set_subscription_listener([](uint64_t peer) {
-      ESP_LOGD(TAG, "Subscribed to peer %016llx, free internal heap %u bytes",
-               static_cast<unsigned long long>(peer),
+      ESP_LOGD(TAG, "Subscribed to peer %016llx at boot %llu ms, free internal heap %u bytes",
+               static_cast<unsigned long long>(peer), boot_ms(),
                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
     });
     instance = this;
     reflex_runtime::start([](bool active) {
-      ESP_LOGI(TAG, "Lease state: %s", active ? "active" : "standby");
+      ESP_LOGI(TAG, "Lease state: %s at boot %llu ms", active ? "active" : "standby", boot_ms());
       if (instance->active_sensor_)
         instance->defer([active]() { instance->active_sensor_->publish_state(active); });
     }, [](uint32_t rule, uint64_t event, uint16_t status) {
@@ -131,7 +134,7 @@ void ReflexComponent::setup() {
     mark_failed();
     return;
   }
-  ESP_LOGI(TAG, "Reflex runtime started");
+  ESP_LOGI(TAG, "Reflex runtime started at boot %llu ms, reset reason %d", boot_ms(), static_cast<int>(esp_reset_reason()));
 }
 
 }  // namespace esphome::matter_reflex

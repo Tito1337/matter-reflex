@@ -13,6 +13,7 @@ import {
     ContactSensorDevice, DimmableLightDevice, HumiditySensorDevice, OccupancySensorDevice,
     OnOffPlugInUnitDevice, TemperatureSensorDevice, WaterLeakDetectorDevice, WindowCoveringDevice,
 } from "@matter/main/devices";
+import { PeerSet } from "@matter/protocol";
 import { createControllerNode, ControllerCommandHandler } from "@matter-server/ws-controller";
 
 Logger.level = "error";
@@ -22,7 +23,11 @@ function host(id) {
     env.set(Crypto, Environment.default.get(Crypto));
     env.set(Entropy, env.get(Crypto));
     new MockStorageService(env);
-    env.set(Network, mesh.addHost(id));
+    const network = mesh.addHost(id);
+    const { ipV6, ipV4 } = network.getIpMac("fake0");
+    network.deleteAddr(...ipV6, ...ipV4);
+    network.addAddr("fd00::" + id);
+    env.set(Network, network);
     return env;
 }
 function device(id) {
@@ -47,7 +52,7 @@ async function step(line) {
     return reply.value;
 }
 
-let subscription;
+let subscription, lampSubscription;
 try {
     const sensors = [];
     for (const [type, id, attributes] of [
@@ -72,10 +77,11 @@ try {
         const peer = await controller.node.peers.commission({
             passcode: 20202021, discriminator: 3800 + id, timeout: Seconds(12), autoSubscribe: false,
         });
-        return peer.peerAddress.nodeId;
+        return peer.peerAddress;
     }
-    const sourceId = await commission(source, 2);
-    const targetId = await commission(target, 3);
+    const sourceAddress = await commission(source, 2);
+    const targetAddress = await commission(target, 3);
+    const sourceId = sourceAddress.nodeId, targetId = targetAddress.nodeId;
     await handler.initializeNodes();
     const paths = ["1/69/0", "2/1030/0", "3/69/0", "4/1026/0", "5/1029/0"];
     const reports = new EventEmitter();
@@ -124,7 +130,41 @@ try {
         // Re-delivering the exact same report must never issue a second command.
         await processReport(report, 0);
     }
+    async function subscribeLamp() {
+        const sub = await handler.subscribe({
+            nodeId: targetId, attributePaths: ["1/6/0"], minInterval: 0, maxInterval: 60,
+        }, { report() {}, closed() {} });
+        assert.equal(sub.priming.attributes["1/6/0"], false);
+        return sub;
+    }
     await subscribe();
+    lampSubscription = await subscribeLamp();
+    subscription.close();
+    lampSubscription.close();
+    // Drop DNS-SD packets in both directions. Keep unicast to the peers live.
+    mesh.router.intercept((packet, forward) => {
+        if (packet.sourcePort !== 5353 && packet.destPort !== 5353) forward(packet);
+    });
+    for (const address of [sourceAddress, targetAddress]) {
+        const peer = controller.node.env.get(PeerSet).get(address);
+        const original = peer.newestSession();
+        const { ip, port } = original.channel.networkAddress;
+        const route = await step(`cold_boot 1 1 ${address.nodeId} ${ip} ${port}`);
+        assert.equal(route, `${ip} ${port}`);
+        await peer.disconnect(new Error("simulated controller restart"));
+        assert.equal(peer.hasSession, false);
+        peer.service.addresses.replace([]);
+        const [savedIp, savedPort] = route.split(" ");
+        peer.descriptor.operationalAddress = { type: "udp", ip: savedIp, port: Number(savedPort) };
+        const session = await peer.connect({ abort: AbortSignal.timeout(10000) });
+        assert.notEqual(session, original);
+        assert.equal(session.channel.networkAddress.ip, savedIp);
+        assert.equal(session.channel.networkAddress.port, Number(savedPort));
+        assert.equal(peer.service.addresses.size, 0, "unexpected discovery result");
+    }
+    await subscribe();
+    lampSubscription = await subscribeLamp();
+    console.log("Source and lamp established fresh CASE sessions and subscriptions with DNS-SD blocked.");
     await step("renew 0");
     await step("renew 4000000"); // Last HA renewal. Next deadline is at 14 seconds.
     // The leak automation is ESP-first even with a healthy lease.
@@ -158,6 +198,7 @@ try {
 } finally {
     engine.stdin.end();
     subscription?.close();
+    lampSubscription?.close();
     await handler.close();
     await controller.close();
     await source.close();

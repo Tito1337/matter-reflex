@@ -2,6 +2,8 @@
 // sessions and feeds actual subscription reports and a deterministic lease clock.
 #include "reflex_engine.h"
 #include "reflex_lease.h"
+#include "reflex_peer_cache.h"
+#include <arpa/inet.h>
 #include <array>
 #include <cassert>
 #include <fstream>
@@ -9,6 +11,40 @@
 #include <iterator>
 #include <string>
 #include <vector>
+
+// The wire fixture learns the address from a working CASE session, then
+// discards all sessions and discovery data. Return the firmware's first route
+// after reloading its saved record into a fresh cache.
+void cold_boot() {
+    uint64_t fabric, owner, node;
+    std::string address;
+    reflex::PeerEndpoint endpoint{};
+    std::cin >> fabric >> owner >> node >> address >> endpoint.port;
+    assert(inet_pton(AF_INET6, address.c_str(), endpoint.ip.data()) == 1);
+    reflex::PeerRecord record{};
+    {
+        reflex::PeerAddressCache cache;
+        cache.load(fabric, owner, &node, &node + 1, [](size_t, auto &) { return false; });
+        assert(cache.remember(node, endpoint, [&](size_t slot, const auto &saved) {
+            assert(slot == 0);
+            record = saved;
+            return true;
+        }));
+    }
+    reflex::PeerAddressCache restored;
+    restored.load(fabric, owner, &node, &node + 1, [&](size_t slot, auto &saved) {
+        if (slot != 0) return false;
+        saved = record;
+        return true;
+    });
+    auto *saved = restored.lookup(node);
+    reflex::PeerConnectionAttempts attempts;
+    attempts.start(saved != nullptr, [&] {
+        char ip[INET6_ADDRSTRLEN];
+        assert(inet_ntop(AF_INET6, saved->ip.data(), ip, sizeof(ip)));
+        std::cout << ip << ' ' << saved->port;
+    }, [] { std::cout << "discovery"; });
+}
 
 int main(int argc, char **argv) {
     assert(argc == 2);
@@ -21,7 +57,9 @@ int main(int argc, char **argv) {
     lease.reset(0);
     std::string operation;
     while (std::cin >> operation) {
-        if (operation == "reset") {
+        if (operation == "cold_boot") {
+            cold_boot();
+        } else if (operation == "reset") {
             sensors = {};
         } else if (operation == "renew") {
             int64_t now;
