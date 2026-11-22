@@ -297,9 +297,10 @@ class StatusMonitor:
         rt = self.runtime
         if (
             not self.online
-            or self.ready_reported
             or not rt.direct_mask
             or rt.status is None
+            # A readiness report still needs a read pairing the mask with its image.
+            or (self.ready_reported and "ready" in rt.status)
         ):
             return None
         return 4 if self.ready_mask != rt.direct_mask else 30

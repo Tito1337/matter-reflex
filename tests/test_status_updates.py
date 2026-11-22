@@ -336,3 +336,28 @@ async def test_restored_mask_requires_matching_live_hash(same_image, expected):
     await monitor.refresh(client)
     assert monitor.ready_mask == expected
     assert monitor.mask_known is same_image
+
+
+@pytest.mark.asyncio
+async def test_reconnect_retries_until_readiness_and_hash_are_verified_together():
+    monitor, rt, client, _ = setup()
+    rt.direct_mask = 1
+    ready = {**snapshot(), "ready": 1}
+    rt.read_status.return_value = ready
+    await monitor.refresh(client)
+    for path, key in native.STATUS_PATHS.items():
+        monitor.attribute(path, EventType.ATTRIBUTE_UPDATED, ready[key])
+    assert monitor.confirmed
+
+    report(client, 9, 0)
+    assert monitor.ready_mask == 0
+    report(client, 9, 1)
+    rt.read_status.return_value = snapshot()
+    await monitor.refresh(client)
+    assert monitor.confirmed and monitor.ready_mask == 0
+    assert monitor.readiness_poll() == 4
+
+    rt.read_status.return_value = ready
+    await monitor.refresh(client)
+    assert monitor.ready_hash == ready["hash"] and monitor.ready_mask == 1
+    assert monitor.readiness_poll() is None
