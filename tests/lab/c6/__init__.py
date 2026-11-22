@@ -155,6 +155,17 @@ class EmulatedBoard:
 
         return eventually(ready, description, timeout=timeout)
 
+    def power_off(self):
+        (self.run / "power-off").touch()
+        eventually(
+            (self.run / "powered-off").exists,
+            "ESP emulator to exit and save flash",
+            timeout=35,
+        )
+
+    def power_on(self):
+        (self.run / "power-off").unlink()
+
     def pairing_code(self):
         self.wait(
             "an attached uncommissioned Thread device",

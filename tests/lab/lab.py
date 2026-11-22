@@ -283,7 +283,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_subparsers(dest="mode", required=True)
     modes.add_parser(
-        "takeover", help="exercise HA takeover and handback with an emulated C6"
+        "takeover", help="exercise controller loss and recovery with an emulated C6"
+    ).add_argument(
+        "--mode",
+        choices=("fallback", "direct", "advanced"),
+        default="fallback",
+        dest="policy",
     )
     modes.add_parser(
         "smoke-ha",
@@ -331,7 +336,9 @@ def main():
     if args.mode in {"smoke-ha", "takeover"}:
         from ha_smoke import smoke
 
-        smoke(with_board=args.mode == "takeover")
+        smoke(
+            with_board=args.mode == "takeover", mode=getattr(args, "policy", "fallback")
+        )
     elif args.mode == "up":
         up(args.interface)
     elif args.mode == "setup":

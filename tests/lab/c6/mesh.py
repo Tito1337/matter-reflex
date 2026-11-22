@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import signal
 from ipaddress import IPv6Address
 from pathlib import Path
 
@@ -35,6 +36,7 @@ async def main():
             radio,
             "--console",
             console,
+            *(["--save-state"] if name == "board" else []),
             "--log-color",
             "never",
             stdin=asyncio.subprocess.PIPE,
@@ -44,7 +46,7 @@ async def main():
         processes.append(process)
 
         async def observe():
-            with (RUN / (name + ".log")).open("wb", buffering=0) as log:
+            with (RUN / (name + ".log")).open("ab", buffering=0) as log:
                 async for line in process.stdout:
                     log.write(line)
                     if name == "router":
@@ -97,20 +99,33 @@ async def main():
             while not dataset.done():
                 await asyncio.sleep(1)
                 await send(router, b"ot dataset active -x")
-        board = await boot(
-            "board",
-            "/run/lab/reflex.bin",
-            "/firmware/matter_reflex.elf",
-            "user,restrict=yes",
-            "bind:9002,peer:127.0.0.1:9001",
-            "usb-jtag",
-        )
-        await asyncio.wait_for(booted.wait(), 45)
-        await send(board, b"key " + (RUN / "http-key").read_bytes())
-        await send(board, b"dataset " + dataset.result())
+        provision = True
         while True:
-            await asyncio.sleep(1)
-            await send(board, b"status")
+            booted.clear()
+            board = await boot(
+                "board",
+                "/run/lab/reflex.bin",
+                "/firmware/matter_reflex.elf",
+                "user,restrict=yes",
+                "bind:9002,peer:127.0.0.1:9001",
+                "usb-jtag",
+            )
+            await asyncio.wait_for(booted.wait(), 45)
+            if provision:
+                await send(board, b"key " + (RUN / "http-key").read_bytes())
+                await send(board, b"dataset " + dataset.result())
+                provision = False
+            while not (RUN / "power-off").exists():
+                await send(board, b"status")
+                await asyncio.sleep(1)
+            # ESP-EMU saves the board's NVS/fabric on a clean interrupt. The router stays up.
+            board.send_signal(signal.SIGINT)
+            await asyncio.wait_for(board.wait(), 20)
+            (RUN / "status.json").unlink(missing_ok=True)
+            (RUN / "powered-off").touch()
+            while (RUN / "power-off").exists():
+                await asyncio.sleep(0.2)
+            (RUN / "powered-off").unlink()
     finally:
         for process in processes:
             if process.returncode is None:

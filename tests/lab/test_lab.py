@@ -123,6 +123,7 @@ def test_outage_restores_server(monkeypatch, failure):
     [
         ("sender", "After contact"),
         ("fade", "After occupancy"),
+        ("silent", "contact should have stayed quiet"),
         ("state", "contact command and resulting actuator state"),
         ("same-side", "without a new crossing"),
         ("baseline", "during sensor rearm"),
@@ -161,4 +162,27 @@ def test_sensor_phase_rejects_incorrect_evidence(monkeypatch, fault, message):
 
     monkeypatch.setattr(lab, "eventually", check_now)
     with pytest.raises(RuntimeError, match=message):
-        sensor_phase("42", fixture, settle=0)
+        sender = {name: None for name in cases} if fault == "silent" else "42"
+        sensor_phase(sender, fixture, settle=0)
+
+
+@pytest.mark.parametrize(
+    ("mode", "healthy", "server_down", "esp_down"),
+    [
+        ("direct", ["esp"] * 7, ["esp"] * 7, ["ha"] * 7),
+        ("fallback", ["ha"] * 7, ["esp"] * 7, ["ha"] * 7),
+        (
+            "advanced",
+            ["esp", "esp", "ha", "esp", "ha", "none", "none"],
+            ["esp", "esp", "esp", "esp", "none", "none", "esp"],
+            ["ha", "ha", "ha", "none", "ha", "ha", "none"],
+        ),
+    ],
+)
+def test_expected_actuator_senders(mode, healthy, server_down, esp_down):
+    from modes import executor
+    from sensor_cases import SENSOR_CASES
+
+    rules = ["multi_press_2", "long_press", *(case.sensor for case in SENSOR_CASES)]
+    for offline, expected in ((None, healthy), ("ha", server_down), ("esp", esp_down)):
+        assert [executor(mode, rule, offline) for rule in rules] == expected

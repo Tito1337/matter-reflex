@@ -18,7 +18,7 @@ from sensor_cases import SENSOR_CASES
 def configure_ha(server_address):
     # Runs inside the new HA container. The temporary admin token stays there.
     import requests
-    from setup import setup
+    from setup import commission, setup
 
     base = "http://127.0.0.1:8123"
     session = requests.Session()
@@ -71,7 +71,8 @@ def configure_ha(server_address):
             f"Could not connect HA to the test Matter Server: {response.json().get('errors')}"
         )
     commissioning = json.load(sys.stdin)
-    entities = asyncio.run(setup(base, commissioning["codes"], sensors=True))
+    asyncio.run(commission(base, commissioning["codes"]))
+    entry_id = None
     if commissioning["key"]:
         flow = session.post(flow_url, json={"handler": "matter_reflex"}, timeout=30)
         flow.raise_for_status()
@@ -100,19 +101,29 @@ def configure_ha(server_address):
                 f"Reflex setup failed at {result.get('step_id')}: {result.get('errors')}"
             )
 
+        entry_id = result["result"]["entry_id"]
         print("Configured the Matter Reflex integration.", flush=True)
+    entities = asyncio.run(
+        setup(
+            base,
+            [],
+            sensors=True,
+            mode=commissioning.get("mode", "fallback"),
+            reflex_entry_id=entry_id,
+        )
+    )
     # Only the disposable HA container reads this private file on its /config tmpfs.
     with os.fdopen(
         os.open("/config/lab-observer", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600),
         "w",
     ) as f:
-        json.dump([token, entities["light"]], f)
+        json.dump([token, entities["light"], entry_id], f)
 
 
 def wait_for_entity(online):
     import requests
 
-    token, entity = json.loads(Path("/config/lab-observer").read_text())
+    token, entity, _ = json.loads(Path("/config/lab-observer").read_text())
     for _ in range(170):
         response = requests.get(
             "http://127.0.0.1:8123/api/states/" + entity,
@@ -158,9 +169,18 @@ def sensor_phase(sender, peer_call, settle=4):
         )
     for case in SENSOR_CASES:
         previous = expected.copy()
-        expected.append({**case.receipt, "sender": sender})
-        state.update(case.state_change)
+        origin = sender[case.sensor] if isinstance(sender, dict) else sender
         peer_call("button", "sensor " + case.sensor)
+        if origin is None:
+            time.sleep(settle)
+            observed = snapshot()
+            if observed != {"commands": expected, **state}:
+                raise RuntimeError(
+                    f"{case.sensor} should have stayed quiet: {observed}"
+                )
+            continue
+        expected.append({**case.receipt, "sender": origin})
+        state.update(case.state_change)
         eventually(
             delivered,
             f"{case.sensor} command and resulting actuator state",
@@ -187,12 +207,12 @@ def sensor_phase(sender, peer_call, settle=4):
         )
     peer_call("targets", "sensor-reset")
     print(
-        f"Verified five sensor edges, actuator states and authenticated commands from node {sender}.",
+        f"Verified sensor edges, actuator states and expected senders {sender}.",
         flush=True,
     )
 
 
-def smoke(with_board=False):
+def smoke(with_board=False, mode="fallback"):
     from lab import (
         FIXTURES,
         PODMAN,
@@ -327,59 +347,112 @@ def smoke(with_board=False):
                 "/app/reflex-lab/ha_smoke.py",
                 "127.0.0.1" if board else server_ip,
             ],
-            input=json.dumps({"codes": codes, "key": board.key if board else None}),
+            input=json.dumps(
+                {"codes": codes, "key": board.key if board else None, "mode": mode}
+            ),
             text=True,
             timeout=360,
             check=True,
         )
 
-        def standby(s):
-            return s["fabrics"] == 1 and s["rules"] and not s["active"]
-
-        reflex = None
-        if board:
-            ready = board.wait("installed rules and a live HA lease", standby)
-            reflex = ready["node"]
-            eventually(
-                subscribed,
-                "Reflex subscriptions on both peers",
-                reflex,
-                peer_call,
+        def wait_ha(state, *args):
+            return podman(
+                "exec",
+                prefix + "ha",
+                "python",
+                "/app/reflex-lab/ha_smoke.py",
+                state,
+                *args,
                 timeout=180,
             )
-        controller = phase(None, 4, excluded_sender=reflex, peer_call=peer_call)
-        sensor_phase(controller, peer_call)
-        eventually(subscribed, "Home Assistant subscriptions", controller, peer_call)
-        if (
-            board
-            and board.wait("standby before outage", standby)["executions"]
-            != ready["executions"]
-        ):
-            raise RuntimeError("Reflex executed during the healthy controller phase")
+
+        def restored(node, previous):
+            current = subscriptions(node, peer_call)
+            return all(new - old for new, old in zip(current, previous, strict=True))
+
+        if board:
+            from modes import ADVANCED, executor, handlers
+
+            ready = board.wait(
+                "installed rules with a live HA lease",
+                lambda s: s["fabrics"] == 1 and s["rules"] and not s["active"],
+            )
+            reflex = ready["node"]
+            eventually(subscribed, "ESP subscriptions", reflex, peer_call, timeout=180)
+
+            def controller_node():
+                nodes = [
+                    {v["node"] for v in peer_call(peer, "info")["subscribers"]}
+                    for peer in FIXTURES
+                ]
+                candidates = set.intersection(*nodes) - {reflex}
+                if len(candidates) == 1:
+                    return candidates.pop()
+                return None
+
+            controller = eventually(
+                controller_node, "distinct subscribed HA controller"
+            )
+            nodes = {"esp": reflex, "ha": controller, "none": None}
+            direct_rows = sum(handlers(mode, rule)[0] == "esp" for rule in ADVANCED)
+
+            def wait_ready():
+                image = wait_ha("ready", str(direct_rows)) if direct_rows else None
+                board.wait(
+                    "commissioned ESP and live HA lease",
+                    lambda s: (
+                        s["node"] == reflex
+                        and s["fabrics"] == 1
+                        and s["rules"]
+                        and (not image or s["rules"] == image)
+                        and not s["active"]
+                    ),
+                )
+
+            def verify(offline=None):
+                senders = {
+                    name: nodes[executor(mode, name, offline)] for name in ADVANCED
+                }
+                if offline != "esp":
+                    before = board.wait(
+                        "ESP ownership phase",
+                        lambda s: s["active"] == (offline == "ha"),
+                    )
+                print(
+                    f"Testing {mode} with {offline or 'neither controller'} offline.",
+                    flush=True,
+                )
+                phase(senders["multi_press_2"], 4, peer_call=peer_call)
+                sensor_phase(senders, peer_call)
+                if offline != "esp":
+                    count = sum(node == reflex for node in senders.values())
+                    board.wait(
+                        f"exactly {count} additional ESP executions",
+                        lambda s: (
+                            s["executions"] == before["executions"] + count
+                            and s["active"] == (offline == "ha")
+                        ),
+                    )
+                    print(
+                        f"Firmware execution counter {before['executions']} → {before['executions'] + count}.",
+                        flush=True,
+                    )
+
+            wait_ready()
+            verify()
+        else:
+            controller = phase(None, 4, peer_call=peer_call)
+            sensor_phase(controller, peer_call)
+        eventually(subscribed, "HA subscriptions", controller, peer_call)
         previous = subscriptions(controller, peer_call)
         if board:
             podman("kill", prefix + "server")
-            active = board.wait("lease expiry on the board", lambda s: s["active"])
+            verify("ha")
             if (
                 podman("inspect", "--format", "{{.State.Running}}", prefix + "server")
                 != "false"
             ):
-                raise RuntimeError("Matter Server was running when Reflex took over")
-            phase(reflex, 4, peer_call=peer_call)
-            sensor_phase(reflex, peer_call)
-            after = board.wait(
-                "one firmware execution per gesture and sensor edge",
-                lambda s: (
-                    s["executions"] == active["executions"] + 2 + len(SENSOR_CASES)
-                ),
-            )
-            if (
-                podman("inspect", "--format", "{{.State.Running}}", prefix + "server")
-                != "false"
-            ):
-                raise RuntimeError(
-                    "Matter Server restarted before the outage phase completed"
-                )
+                raise RuntimeError("Matter Server restarted during the outage")
         else:
             podman("stop", "--time", "10", prefix + "server")
             peer_call("targets", "reset")
@@ -402,51 +475,70 @@ def smoke(with_board=False):
                     "Actuator received a command while its only controller was stopped"
                 )
             peer_call("button", "sensor baseline")
-            print("Both peers stayed available with Matter Server offline.", flush=True)
-
-        def wait_ha(state):
-            podman(
-                "exec",
-                prefix + "ha",
-                "python",
-                "/app/reflex-lab/ha_smoke.py",
-                state,
-                timeout=180,
-            )
 
         wait_ha("offline")
         podman("start", prefix + "server")
-
-        def resubscribed():
-            # The peer may still list its old controller session after server loss.
-            current = subscriptions(controller, peer_call)
-            return all(new - old for new, old in zip(current, previous, strict=True))
-
         eventually(
-            resubscribed,
-            "new controller subscriptions at both peers after restart",
+            restored,
+            "new HA subscriptions at both peers",
+            controller,
+            previous,
             timeout=180,
         )
         wait_ha("online")
-        if board:
-            board.wait("renewed lease after recovery", standby)
-        phase(controller, 4, peer_call=peer_call)
-        sensor_phase(controller, peer_call)
-        if (
-            board
-            and board.wait("standby after handback", standby)["executions"]
-            != after["executions"]
-        ):
-            raise RuntimeError("Reflex executed during handback")
-        if board:
-            print(
-                f"Handback verified. Firmware executions {active['executions']} → {after['executions']} during outage, unchanged after recovery.",
-                flush=True,
+        if not board:
+            phase(controller, 4, peer_call=peer_call)
+            sensor_phase(controller, peer_call)
+            return
+        wait_ready()
+        verify()
+        previous = subscriptions(reflex, peer_call)
+        board.power_off()
+        # Last in-flight renewal plus the integration's ten-second reciprocal lease.
+        time.sleep(15)
+        verify("esp")
+
+        def target_history():
+            return [
+                peer_call("targets", view) for view in ("snapshot", "sensor-snapshot")
+            ]
+
+        before_reboot = target_history()
+        board.power_on()
+        eventually(
+            restored,
+            "fresh ESP subscriptions after cold boot",
+            reflex,
+            previous,
+            timeout=240,
+        )
+        # After the firmware's ten-second boot grace, standby requires a real renewal.
+        time.sleep(11)
+        wait_ready()
+        if target_history() != before_reboot:
+            raise RuntimeError(
+                "A peer received a replayed command during ESP cold boot"
             )
+        verify()
+
+
+def wait_direct_ready(count):
+    _, _, entry = json.loads(Path("/config/lab-observer").read_text())
+    path = Path("/config/.storage", f"matter_reflex.{entry}.readiness")
+    for _ in range(150):
+        if path.exists():
+            proof = json.loads(path.read_text())["data"]
+            if proof["ready"].bit_count() == count:
+                print(proof["hash"])
+                return
+        time.sleep(1)
+    raise RuntimeError(f"HA never confirmed readiness for {count} direct source paths")
 
 
 if __name__ == "__main__":
     if sys.argv[1] in {"online", "offline"}:
         wait_for_entity(sys.argv[1] == "online")
+    elif sys.argv[1] == "ready":
+        wait_direct_ready(int(sys.argv[2]))
     else:
         configure_ha(sys.argv[1])

@@ -4,12 +4,15 @@ import asyncio
 import json
 import os
 import sys
+from contextlib import asynccontextmanager
 
 import aiohttp
+from modes import condition
 from sensor_cases import SENSOR_CASES
 
 
-async def setup(base, codes, *, sensors=False):
+@asynccontextmanager
+async def api(base):
     async with (
         aiohttp.ClientSession(
             headers={"Authorization": "Bearer " + os.environ["HA_TOKEN"]}
@@ -33,9 +36,19 @@ async def setup(base, codes, *, sensors=False):
                 )
             return reply["result"]
 
+        yield http, request
+
+
+async def commission(base, codes):
+    async with api(base) as (_, request):
         for code in codes:
             await request("matter/commission", code=code, network_only=True)
 
+
+async def setup(base, codes, *, sensors=False, mode="fallback", reflex_entry_id=None):
+    if codes:
+        await commission(base, codes)
+    async with api(base) as (http, request):
         # Match HA's interviewed nodes by the fixture serial numbers. Entity names can be renamed.
         fixtures = [
             ("event", "REFLEXLABBUTTON", "event", 1),
@@ -124,6 +137,8 @@ async def setup(base, codes, *, sensors=False):
                 "triggers": [trigger],
                 "actions": [action],
             }
+            if reflex_entry_id and (mode != "fallback" or name == "long_press"):
+                rule["conditions"] = [condition(mode, name, reflex_entry_id)]
             async with http.post(
                 base + "/api/config/automation/config/" + rule_id, json=rule
             ) as response:
