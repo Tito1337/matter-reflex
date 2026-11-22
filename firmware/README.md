@@ -99,7 +99,7 @@ write access after reconnecting the board, restore the device permissions using
 your Linux distribution's usual method.
 
 If you have used shade rules and want to downgrade from firmware 1.1 to 1.0,
-remove their ESP fallback label and wait for Home Assistant to
+remove the `reflex` label from those automations and wait for Home Assistant to
 confirm synchronization before flashing. Firmware 1.0 can load only a rule
 image that contains light rules exclusively.
 
@@ -217,7 +217,7 @@ reads and subscription reports do not renew the lease.
 
 The high bit of the operation byte in a rule selects direct ESP handling. Existing fallback images are byte-for-byte unchanged. Receivers predating direct rules reject the flagged operation. Direct rules share the existing peer subscriptions and ignore the HA lease once the fabric identity and source subscription are established. Priming reports are discarded in both modes.
 
-Attributes 5–8 return four pages of the current direct execution journal. The authenticated HTTP channel exposes the same data at `/v1/activity`; the encrypted ESPHome exchange includes it as `journal`. Each result consists of 16 hex digits of ESP run ID, eight of rule ID, and four of command status. Results for the same source event share a run ID. HA verifies the image hash and maps rule IDs to automation entities and targets. The journal retains the last 32 direct target results.
+Attributes 5–8 return four pages of the execution journal. The authenticated HTTP channel exposes the same data at `/v1/activity`; the encrypted ESPHome exchange includes it as `journal`. Each result consists of 16 hex digits of ESP run ID, eight of rule ID, and four of command status. Results for the same button event or sensor report share a run ID and one lease decision. Each direct or fallback target contributes a result. Attribute 9 and the management snapshot’s `ready` field contain a 32-bit mask. Bit zero corresponds to the first row in the installed image. A set bit identifies a direct rule with an established source subscription. HA checks the mask against the verified image hash before delegating. HA verifies the image hash and maps rule IDs to automation entities and targets. The journal retains the last 32 target results.
 
 Endpoint 1 hosts the rules cluster and its vendor-specific `RuleExecuted`
 event. Fields 0 through 3 contain the rule ID, local node ID, source event

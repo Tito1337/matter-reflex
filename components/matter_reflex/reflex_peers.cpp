@@ -30,18 +30,51 @@ uint32_t generation;
 void (*subscription_listener)(uint64_t);
 const reflex::Rules *rule_set;
 unsigned required_peers;
+reflex::SensorState sensor_states[reflex::kMaxRules];
 reflex::State states[reflex::kMaxRules];
 
 void forget_states(NodeId node) {
     for (size_t i = 0; i < rule_set->count; ++i) {
+        if (rule_set->rows[i].source == node) sensor_states[i] = {};
         if (rule_set->rows[i].target == node) states[i] = {-1, -1};
     }
+}
+
+void dispatch(size_t index, EventNumber number, uint64_t run);
+
+int32_t measurement(ClusterId cluster, TLV::TLVReader *reader, const StatusIB &status) {
+    if (!reader || status.ToChipError() != CHIP_NO_ERROR) return reflex::kInvalidMeasurement;
+    switch (cluster) {
+    case 0x45: {
+        bool value;
+        if (reader->Get(value) == CHIP_NO_ERROR) return value;
+        break;
+    }
+    case 0x406: {
+        uint8_t value;
+        if (reader->Get(value) == CHIP_NO_ERROR) return value;
+        break;
+    }
+    case 0x402: {
+        int16_t value;
+        if (reader->Get(value) == CHIP_NO_ERROR) return value;
+        break;
+    }
+    case 0x405: {
+        uint16_t value;
+        if (reader->Get(value) == CHIP_NO_ERROR) return value;
+        break;
+    }
+    }
+    return reflex::kInvalidMeasurement;
 }
 
 class Peer : public ReadClient::Callback {
 public:
     NodeId node = 0;
-    bool source = false, lamp = false, cover = false, established = false, connecting = false;
+    bool buttons = false, lamp = false, level = false, cover = false, established = false, connecting = false;
+    std::array<bool, 4> sensors{};
+    static constexpr std::array<ClusterId, 4> sensor_clusters{0x45, 0x406, 0x402, 0x405};
     SessionHolder session;
     void reset() {
         on_connected.Cancel();
@@ -49,7 +82,8 @@ public:
         reader.reset();
         session.Release();
         node = 0;
-        source = lamp = cover = established = connecting = false;
+        buttons = lamp = level = cover = established = connecting = false;
+        sensors.fill(false);
         high_water.ClearValue();
         cached_address.ClearValue();
         retry_at = 0;
@@ -72,7 +106,23 @@ public:
             TransportPayloadCapability::kMRPPayload, cached_address);
     }
     void OnAttributeData(const ConcreteDataAttributePath &p, TLV::TLVReader *r, const StatusIB &s) override {
-        if (p.mAttributeId != 0 || (p.mClusterId != 6 && p.mClusterId != 8)) return;
+        if (p.mAttributeId != 0) return;
+        if (p.mClusterId != 6 && p.mClusterId != 8) {
+            const auto value = measurement(p.mClusterId, r, s);
+            const auto handling = reflex_runtime::handling();
+            uint64_t run = 0;
+            for (size_t i = 0; i < rule_set->count; ++i) {
+                const auto &rule = rule_set->rows[i];
+                // Update while HA owns the lease, too. Expiry never replays an edge.
+                if (sensor_states[i].report(rule, node, p.mEndpointId, p.mClusterId, value) &&
+                    established && handling != reflex_runtime::Handling::unavailable &&
+                    rule.handles(handling == reflex_runtime::Handling::all)) {
+                    if (!run) run = reflex_runtime::next_run();
+                    dispatch(i, 0, run); // Attribute reports have no Matter EventNumber.
+                }
+            }
+            return;
+        }
         int value = -1;
         if (r && s.ToChipError() == CHIP_NO_ERROR) {
             bool on;
@@ -123,10 +173,12 @@ private:
                                                     ReadClient::InteractionType::Subscribe));
         if (!p.reader || !p.session.Grab(handle)) { p.disconnect(); return; }
         EventPathParams events(kInvalidEndpointId, 0x3b, kInvalidEventId, true /* urgent */);
-        AttributePathParams attrs[3];
+        AttributePathParams attrs[3 + sensor_clusters.size()];
         size_t attr_count = 0;
-        if (p.lamp) {
-            attrs[attr_count++] = AttributePathParams(kInvalidEndpointId, 6, 0);
+        for (size_t i = 0; i < p.sensors.size(); ++i)
+            if (p.sensors[i]) attrs[attr_count++] = AttributePathParams(kInvalidEndpointId, sensor_clusters[i], 0);
+        if (p.lamp) attrs[attr_count++] = AttributePathParams(kInvalidEndpointId, 6, 0);
+        if (p.level) {
             attrs[attr_count++] = AttributePathParams(kInvalidEndpointId, 8, 0);
         }
         if (p.cover) {
@@ -136,7 +188,7 @@ private:
                                                       Clusters::WindowCovering::Attributes::FeatureMap::Id);
         }
         ReadPrepareParams req(handle);
-        if (p.source) {
+        if (p.buttons) {
             req.mpEventPathParamsList = &events;
             req.mEventPathParamsListSize = 1;
             if (p.high_water.HasValue()) req.mEventNumber.SetValue(p.high_water.Value()+1);
@@ -220,22 +272,31 @@ void dispatch(size_t index, EventNumber number, uint64_t run) {
     case 3: {
         Clusters::LevelControl::Commands::MoveToLevelWithOnOff::Type request;
         request.level = static_cast<uint8_t>(command.value);
-        request.transitionTime.SetNonNull(0);
+        request.transitionTime.SetNonNull(rule.transition);
         error = invoke(session.Value(), rule, number, run, request);
         break;
     }
+    case reflex::kTiltOpen:
     case reflex::kCoverOpen:
         error = invoke(session.Value(), rule, number, run, covering::UpOrOpen::Type{});
         break;
+    case reflex::kTiltClose:
     case reflex::kCoverClose:
         error = invoke(session.Value(), rule, number, run, covering::DownOrClose::Type{});
         break;
+    case reflex::kTiltStop:
     case reflex::kCoverStop:
         error = invoke(session.Value(), rule, number, run, covering::StopMotion::Type{});
         break;
     case reflex::kCoverPosition: {
         covering::GoToLiftPercentage::Type request;
         request.liftPercent100thsValue = command.value;
+        error = invoke(session.Value(), rule, number, run, request);
+        break;
+    }
+    case reflex::kTiltPosition: {
+        covering::GoToTiltPercentage::Type request;
+        request.tiltPercent100thsValue = command.value;
         error = invoke(session.Value(), rule, number, run, request);
         break;
     }
@@ -270,11 +331,13 @@ void Peer::OnEventData(const EventHeader &h, TLV::TLVReader *r, const StatusIB *
         if (value.Decode(*r) != CHIP_NO_ERROR) return;
         presses = value.totalNumberOfPressesCounted;
     }
+    const auto handling = reflex_runtime::handling();
+    if (handling == reflex_runtime::Handling::unavailable) return;
     const uint64_t run = reflex_runtime::next_run();
     for (size_t i = 0; i < rule_set->count; ++i) {
-        if (reflex_runtime::handles(rule_set->rows[i]) &&
+        if (rule_set->rows[i].handles(handling == reflex_runtime::Handling::all) &&
             reflex::matches(rule_set->rows[i], node, h.mPath.mEndpointId, h.mPath.mEventId, presses))
-            dispatch(i, h.mEventNumber, rule_set->rows[i].direct ? run : 0);
+            dispatch(i, h.mEventNumber, run);
     }
 }
 } // namespace
@@ -296,8 +359,24 @@ void configure(FabricIndex index, const reflex::Rules &rules) {
     }
     std::sort(nodes.begin(), end);
     required_peers = std::unique(nodes.begin(), end) - nodes.begin();
-    for (size_t i = 0; i < rules.count; ++i) states[i] = {-1, -1};
+    for (size_t i = 0; i < rules.count; ++i) {
+        states[i] = {-1, -1};
+        sensor_states[i] = {};
+    }
 }
+uint32_t direct_ready_mask() {
+    uint32_t mask = 0;
+    if (!rule_set) return mask;
+    for (size_t i = 0; i < rule_set->count; ++i) {
+        const auto &rule = rule_set->rows[i];
+        if (!rule.direct) continue;
+        const auto *source = find(rule.source);
+        if (source && source->established)
+            mask |= uint32_t(1) << i;
+    }
+    return mask;
+}
+
 Readiness readiness() {
     unsigned ready = 0;
     for (const auto &peer : peers)
@@ -308,10 +387,19 @@ Readiness readiness() {
 void tick() {
     if (!fabric || !rule_set) return;
     for (size_t i = 0; i < rule_set->count; ++i) {
-        if (auto *p = ensure(rule_set->rows[i].source)) p->source = true;
+        const auto &rule = rule_set->rows[i];
+        if (auto *p = ensure(rule.source)) {
+            auto cluster = reflex::sensor_cluster(rule.event);
+            if (!cluster) p->buttons = true;
+            else for (size_t j = 0; j < p->sensors.size(); ++j)
+                if (p->sensor_clusters[j] == cluster) p->sensors[j] = true;
+        }
         if (auto *p = ensure(rule_set->rows[i].target)) {
             if (reflex::is_cover(rule_set->rows[i].op)) p->cover = true;
-            else p->lamp = true;
+            else {
+                p->lamp = true;
+                if (rule.op >= 3 && rule.op <= 5) p->level = true;
+            }
         }
     }
     for (auto &peer : peers) if (peer) peer->maintain();

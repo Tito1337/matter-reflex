@@ -11,6 +11,7 @@ from .wire import digest
 
 LEASE_ACTION_ID = 1
 PREFIX = f"{ENDPOINT}/{CLUSTER}/"
+READY_PATH = PREFIX + "9"
 SOFTWARE_VERSION_PATH = "0/40/9"
 LEASE_IDENTITY_PATHS = ["0/40/2", "0/40/3", SOFTWARE_VERSION_PATH]
 # UnsupportedAccess, UnsupportedEndpoint, UnsupportedCommand, UnsupportedAttribute,
@@ -92,8 +93,11 @@ def validate_status_value(key, value):
         raise ReflexError(f"Invalid Reflex status attribute {key}")
 
 
-async def read_status(client, node_id):
-    data = await client.read_attribute(node_id, list(STATUS_PATHS))
+async def read_status(client, node_id, *, include_ready=False):
+    paths = list(STATUS_PATHS)
+    if include_ready:
+        paths.append(READY_PATH)
+    data = await client.read_attribute(node_id, paths)
     if not isinstance(data, dict):
         raise ReflexError("Matter Server returned an invalid status snapshot")
     status = {"node_id": f"{node_id:016x}"}
@@ -101,6 +105,9 @@ async def read_status(client, node_id):
         value = data.get(path)
         validate_status_value(key, value)
         status[key] = value
+    if include_ready and data.get(READY_PATH) is not None:
+        validate_status_value("ready", data[READY_PATH])
+        status["ready"] = data[READY_PATH]
     return status
 
 

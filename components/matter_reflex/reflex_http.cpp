@@ -157,9 +157,9 @@ esp_err_t request(httpd_req_t *req) {
         } else if (status) {
             applied = node != 0;
             snprintf(response, sizeof(response),
-                     "{\"node_id\":\"%016" PRIx64 "\",\"hash\":\"%s\",\"active\":%s,\"executions\":%" PRIu32 "}",
+                     "{\"node_id\":\"%016" PRIx64 "\",\"hash\":\"%s\",\"active\":%s,\"executions\":%" PRIu32 ",\"ready\":%" PRIu32 "}",
                      node, reflex_runtime::rules_hash(), reflex_runtime::active() ? "true" : "false",
-                     reflex_runtime::executions());
+                     reflex_runtime::executions(), reflex_runtime::direct_ready_mask());
         } else {
             applied = reflex_runtime::replace_image(body.data(), size);
         }

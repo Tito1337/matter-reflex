@@ -19,7 +19,8 @@ from . import native
 from .acl import AclManager
 from .activity import Activity
 from .compiler import async_compile
-from .const import DOMAIN, HEARTBEAT_SECONDS, LEASE_SECONDS
+from .const import DOMAIN, HEARTBEAT_SECONDS
+from .ownership import lease_for
 from .status import RETRY_INTERVAL, StatusMonitor
 from .transport import (
     CHANNEL_ERRORS,
@@ -69,8 +70,9 @@ class Runtime:
         self.native_status_readable = False
         self.monitor = StatusMonitor(self)
         self.activity = Activity(self)
-        # Mirror the ESP's startup quiet period and monotonic lease.
-        self.esp_deadline = None
+        self.lease = lease_for(hass, entry.entry_id)
+        self.desired_rules = {}
+        self.direct_mask = 0
         self.target_hash = None
         self.last_sync = None
         self.acl_synced = False
@@ -83,12 +85,26 @@ class Runtime:
             return None
         return self.acl_synced and self.status["hash"] == self.target_hash
 
-    @property
-    def esp_lease_expired(self):
-        return (
-            self.hass.state is CoreState.running
-            and self.esp_deadline is not None
-            and monotonic() >= self.esp_deadline
+    def esp_handles(self, entity_id, source):
+        installed = self.activity.image_hash
+        if installed is None or installed != self.monitor.ready_hash:
+            return False
+        # Compare each requested row with the last accepted image. An unrelated
+        # failed transfer must not bring HA back into a working direct reflex.
+        desired = {
+            key: row
+            for key, row in self.desired_rules.items()
+            if row.direct
+            and row.entity_id == entity_id
+            and (source is None or source == row.source_entity)
+        }
+        ready = {
+            key: self.activity.rules[key]
+            for bit, key in enumerate(sorted(self.activity.rules))
+            if self.monitor.ready_mask & (1 << bit)
+        }
+        return bool(desired) and all(
+            ready.get(key) == row for key, row in desired.items()
         )
 
     def client(self):
@@ -172,14 +188,10 @@ class Runtime:
         verified = None
         use_action = False
         next_tick = None
-        first_running_tick = True
         while True:
             started = monotonic()
             try:
                 if self.hass.state is CoreState.running:
-                    if first_running_tick:
-                        self.esp_deadline = started + LEASE_SECONDS
-                        first_running_tick = False
                     async with asyncio.timeout(4):
                         client = self.client()
                         node = client.get_node(self.node)
@@ -198,7 +210,7 @@ class Runtime:
                             verified = current
                         started = monotonic()  # Discovery can delay dispatch.
                         await native.renew(client, self.node, use_action)
-                        self.esp_deadline = monotonic() + LEASE_SECONDS
+                        self.lease.renew()
                         if clear_repair:
                             self.clear_issue("lease")
                             clear_repair = False
@@ -228,13 +240,22 @@ class Runtime:
         if client is not None:
             try:
                 async with asyncio.timeout(3):
-                    latest = await native.read_status(client, self.node)
-                    self.native_status_readable = True
-                    return latest
+                    latest = await native.read_status(
+                        client, self.node, include_ready=bool(self.direct_mask)
+                    )
             except CHANNEL_ERRORS:
                 self.native_status_readable = False
                 if self.channel is None:
                     raise
+            else:
+                self.native_status_readable = True
+                if not self.direct_mask or "ready" in latest or self.channel is None:
+                    return latest
+                # Some Matter servers only expose the original vendor attributes.
+                try:
+                    return await self.channel.status(client)
+                except CHANNEL_ERRORS:
+                    return latest
         if self.channel is None:
             raise ReflexError("Matter Server is unavailable")
         return await self.channel.status(client)
@@ -299,6 +320,15 @@ class Runtime:
             self.node,
             self.entry.entry_id,
         )
+        self.desired_rules = compiled.activity
+        direct_mask = sum(
+            1 << bit
+            for bit, key in enumerate(sorted(compiled.activity))
+            if compiled.activity[key].direct
+        )
+        if self.direct_mask != direct_mask:
+            self.direct_mask = direct_mask
+            self.monitor.wake.set()
         current = set()
         for rule, reason in compiled.issues.items():
             key = f"rule.{rule}"
@@ -335,10 +365,10 @@ class Runtime:
             observed = await self.monitor.refresh(client)
         if observed["hash"] != self.target_hash:
             raise ReflexError("Device did not commit the expected rule hash")
+        self.activity.configure(expected, compiled.activity)
         # Only remove obsolete permissions once the device confirms the rules.
         await self.acls.reconcile(client, compiled.permissions, prune=True)
         self.last_sync = datetime.now(UTC)
         self.synced_permissions = compiled.permissions
         self.acl_synced = True
-        self.activity.configure(expected, compiled.activity)
         self.clear_issue("sync")

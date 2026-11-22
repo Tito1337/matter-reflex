@@ -24,6 +24,8 @@ class Activity:
         self.runtime = runtime
         self.image_hash = None
         self.rules = {}
+        self.groups = {}
+        self.pending = {}
         self.seen = deque(maxlen=128)
         self.wake = asyncio.Event()
         self.store = Store(
@@ -31,14 +33,25 @@ class Activity:
         )
 
     def configure(self, image_hash, rules):
-        if self.image_hash != image_hash or self.rules != rules:
-            self.image_hash, self.rules = image_hash, rules
-            self.wake.set()
+        if self.image_hash == image_hash and self.rules == rules:
+            return
+        if self.image_hash != image_hash:
+            self.pending.clear()
+        self.image_hash, self.rules = image_hash, rules
+        members = {}
+        for key, row in rules.items():
+            members.setdefault((row.entity_id, row.trigger), set()).add(key)
+        self.groups = {key: group for group in members.values() for key in group}
+        self.wake.set()
 
     async def read(self):
         rt = self.runtime
         if rt.channel is not None:
-            return await rt.channel.activity(rt.monitor.client)
+            try:
+                return await rt.channel.activity(rt.monitor.client)
+            except CHANNEL_ERRORS:
+                if not rt.native_status_readable:
+                    raise
         paths = [PREFIX + str(i) for i in range(5, 9)]
         data = await rt.client().read_attribute(rt.node, [PREFIX + "2", *paths])
         if not isinstance(data, dict) or not all(
@@ -51,7 +64,11 @@ class Activity:
         }
 
     def record(self, snapshot):
-        if not isinstance(snapshot, dict) or snapshot.get("hash") != self.image_hash:
+        if not isinstance(snapshot, dict) or "hash" not in snapshot:
+            raise ReflexError("Invalid ESP activity snapshot")
+        if snapshot["hash"] != self.image_hash:
+            self.runtime.acl_synced = False
+            self.runtime.dirty.set()
             return
         journal = snapshot.get("journal")
         if not isinstance(journal, str) or not re.fullmatch(
@@ -59,58 +76,73 @@ class Activity:
         ):
             raise ReflexError("Invalid ESP activity journal")
 
-        groups = {}
         for offset in range(0, len(journal), 28):
             run = journal[offset : offset + 16]
             rule_id = int(journal[offset + 16 : offset + 24], 16)
-            rule = self.rules.get(rule_id)
-            if rule is not None:
-                key = (run, rule.entity_id, rule.trigger)
-                groups.setdefault(key, {})[rule_id] = int(
-                    journal[offset + 24 : offset + 28], 16
-                )
-
-        for (run, entity, trigger), outcomes in groups.items():
-            # The rule ID incorporates the automation unique ID, independently of renames.
-            key = f"{run}/{min(outcomes)}"
-            expected = {
-                i
-                for i, row in self.rules.items()
-                if (row.entity_id, row.trigger) == (entity, trigger)
-            }
-            if outcomes.keys() != expected or key in self.seen:
+            group = self.groups.get(rule_id)
+            if group is None:
                 continue
+            # Rule IDs are stable across entity renames.
+            key = f"{run}/{min(group)}"
+            if key in self.seen:
+                continue
+            outcomes = self.pending.setdefault(key, {})
+            outcomes[rule_id] = int(journal[offset + 24 : offset + 28], 16)
+            if len(outcomes) != len(group):
+                continue
+            row = self.rules[rule_id]
             details = ", ".join(
                 f"{self.rules[i].target} ({RESULTS.get(status, f'Matter status {status:#x}')})"
                 for i, status in sorted(outcomes.items())
             )
             hass = self.runtime.hass
-            state = hass.states.get(entity)
+            state = hass.states.get(row.entity_id)
+            mode = "Direct reflex" if row.direct else "Fallback reflex"
             async_log_entry(
                 hass,
-                state.name if state else entity,
-                f"Direct reflex handled by ESP: {details}",
+                state.name if state else row.entity_id,
+                f"{mode} handled by ESP: {details}",
                 DOMAIN,
-                entity,
+                row.entity_id,
             )
+            del self.pending[key]
             self.seen.append(key)
             self.store.async_delay_save(lambda: list(self.seen), 2)
 
+        # Retain incomplete groups across ring rotation, with a fixed memory bound.
+        while len(self.pending) > 128:
+            del self.pending[next(iter(self.pending))]
+
     async def run(self):
-        self.seen.extend(await self.store.async_load() or [])
+        if not self.seen:
+            self.seen.extend(await self.store.async_load() or [])
         while True:
             self.wake.clear()
             retry = False
-            if self.rules:
+            direct = any(row.direct for row in self.rules.values())
+            status = self.runtime.status
+            # In standby a fallback-only ESP with a zero counter has no journal
+            # to fetch. Status changes and reconnects wake this task.
+            read_journal = self.rules and (
+                direct or status is None or status["executions"]
+            )
+            if read_journal:
                 try:
-                    async with asyncio.timeout(12):
-                        self.record(await self.read())
+                    image = self.image_hash
+                    generation = self.runtime.monitor.generation
+                    async with asyncio.timeout(15):
+                        snapshot = await self.read()
+                    if (
+                        image == self.image_hash
+                        and generation == self.runtime.monitor.generation
+                    ):
+                        self.record(snapshot)
                 except CHANNEL_ERRORS:
                     retry = True
             try:
                 # Servers without vendor attribute reports still expose the journal
                 # through the same authenticated management path as the rules.
-                poll = self.rules and (retry or not self.runtime.monitor.confirmed)
+                poll = retry or (direct and not self.runtime.monitor.confirmed)
                 async with asyncio.timeout(30 if poll else None):
                     await self.wake.wait()
             except TimeoutError:

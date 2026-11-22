@@ -29,7 +29,7 @@ using namespace chip::app;
 namespace {
 constexpr EndpointId kEndpoint = 1;
 constexpr ClusterId kCluster = 0xfff1fc00;
-enum Attribute : AttributeId { Lease, Transfer, Hash, Active, Executions, JournalStart };
+enum Attribute : AttributeId { Lease, Transfer, Hash, Active, Executions, JournalStart, DirectReady = JournalStart + kJournalPages };
 constexpr char kHex[] = "0123456789abcdef";
 nvs_handle_t storage;
 reflex::LeaseDeadline deadline;
@@ -40,6 +40,7 @@ Outcome journal[kJournalSize];
 size_t journal_write, journal_count;
 uint32_t boot_nonce, run_sequence;
 bool reported_active;
+uint32_t reported_ready;
 void (*active_changed)(bool);
 ResultListener result_listener;
 bool initialized;
@@ -263,6 +264,7 @@ public:
             return e.Encode(CharSpan::fromCharString(page));
         }
         switch (p.mAttributeId) {
+        case DirectReady: return e.Encode(direct_ready_mask());
         case Lease: return e.Encode(deadline.granted_seconds());
         case Transfer: return e.Encode(CharSpan());
         case Hash: return e.Encode(CharSpan::fromCharString(rules_hash()));
@@ -304,13 +306,22 @@ void timer(System::Layer *layer, void *) {
     select_fabric();
     update_active();
     reflex_peers::tick();
+    const auto ready = direct_ready_mask();
+    if (ready != reported_ready) {
+        reported_ready = ready;
+        changed(DirectReady);
+    }
     ESP_ERROR_CHECK(layer->StartTimer(System::Clock::Milliseconds32(500), timer, nullptr) == CHIP_NO_ERROR ? ESP_OK : ESP_FAIL);
 }
 } // namespace
 
 bool active() { return owner_current() && deadline.expired(esp_timer_get_time()); }
-bool handles(const reflex::Rule &rule) {
-    return owner_current() && rule.handles(deadline.expired(esp_timer_get_time()));
+Handling handling() {
+    if (!owner_current()) return Handling::unavailable;
+    return deadline.expired(esp_timer_get_time()) ? Handling::all : Handling::direct_only;
+}
+uint32_t direct_ready_mask() {
+    return owner_current() ? reflex_peers::direct_ready_mask() : 0;
 }
 const char *rules_hash() { return owner_current() ? digest : ""; }
 uint32_t executions() { return execution_count; }
@@ -402,6 +413,7 @@ void create_cluster(esp_matter::endpoint_t *endpoint) {
     add(Hash, esp_matter_char_str(empty, 0), false, 64);
     add(Active, esp_matter_bool(false));
     add(Executions, esp_matter_uint32(0));
+    add(DirectReady, esp_matter_uint32(0));
     for (size_t i = 0; i < kJournalPages; ++i)
         add(JournalStart + i, esp_matter_char_str(empty, 0), false, kJournalPageChars);
     ESP_ERROR_CHECK(event::create(cluster, 0) ? ESP_OK : ESP_ERR_NO_MEM);

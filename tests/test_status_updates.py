@@ -61,6 +61,7 @@ def setup(channel=None):
             config_entries=SimpleNamespace(async_get_entry=lambda _: entry)
         ),
         target_hash="a" * 64,
+        direct_mask=0,
         status=None,
         acl_synced=True,
         client=Mock(return_value=client),
@@ -250,3 +251,42 @@ async def test_invalid_snapshot_uses_normal_transport_error_handling():
     client = SimpleNamespace(read_attribute=AsyncMock(return_value=None))
     with pytest.raises(ReflexError, match="invalid status snapshot"):
         await native.read_status(client, 31)
+
+
+@pytest.mark.asyncio
+async def test_source_readiness_is_bound_to_its_verified_image():
+    monitor, rt, client, _ = setup()
+    rt.direct_mask = 5
+    rt.read_status.return_value = {**snapshot(), "ready": 1}
+    await monitor.refresh(client)
+    assert monitor.ready_mask == 1 and monitor.readiness_poll() == 4
+    monitor.wake.clear()
+    report(client, 9, 5)
+    assert monitor.wake.is_set()
+    rt.read_status.return_value = {**snapshot(), "ready": 5}
+    await monitor.refresh(client)
+    assert monitor.ready_hash == rt.target_hash and monitor.ready_mask == 5
+    assert monitor.readiness_poll() is None
+    monitor.wake.clear()
+    report(client, 9, 5)
+    assert not monitor.wake.is_set()
+    report(client, 2, "b" * 64)
+    assert monitor.ready_hash != rt.target_hash and monitor.ready_mask == 0
+
+
+@pytest.mark.asyncio
+async def test_stale_read_cannot_restore_ready_bits_after_source_disconnect():
+    monitor, rt, client, _ = setup()
+    rt.direct_mask = 1
+    rt.read_status.return_value = {**snapshot(), "ready": 0}
+    await monitor.refresh(client)
+
+    async def snapshot_before_disconnect(_):
+        report(client, 9, 0)
+        return {**snapshot(), "ready": 1}
+
+    rt.read_status.side_effect = snapshot_before_disconnect
+    monitor.wake.clear()
+    await monitor.refresh(client)
+    assert monitor.ready_mask == 0
+    assert monitor.wake.is_set()

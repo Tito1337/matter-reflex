@@ -7,6 +7,7 @@ namespace reflex_peers {
 void configure(chip::FabricIndex fabric, const reflex::Rules &rules);
 struct Readiness { unsigned ready, total; };
 Readiness readiness();
+uint32_t direct_ready_mask();
 void tick();
 void set_subscription_listener(void (*listener)(uint64_t node));
 } // namespace reflex_peers

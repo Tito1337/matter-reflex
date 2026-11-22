@@ -3,8 +3,12 @@
 import json
 from collections import Counter
 
+from .compiler import SOURCE_CLUSTERS
 from .transport import ReflexError
 
+ALLOWED_TARGETS = {(59, 1), (6, 3), (8, 3), (0x0102, 3)} | {
+    (cluster, 1) for cluster in SOURCE_CLUSTERS.values()
+}
 ACL = "0/31/0"
 TARGET_LIMIT = "0/31/3"
 ENTRY_LIMIT = "0/31/4"
@@ -90,8 +94,7 @@ def plan(entries, owned, subject, needed, fabric, per_entry, max_entries, prune)
         for e in previous:
             wanted.update((t["1"], t["0"], e["1"]) for t in e["4"])
     if any(
-        (cluster, p) not in {(59, 1), (6, 3), (8, 3), (0x0102, 3)}
-        or not 1 <= ep <= 65534
+        (cluster, p) not in ALLOWED_TARGETS or not 1 <= ep <= 65534
         for ep, cluster, p in wanted
     ):
         raise ReflexError("Unsupported ACL target or privilege")

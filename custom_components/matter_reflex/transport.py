@@ -159,6 +159,10 @@ def checked_status(data, node_id):
     if (
         not isinstance(data, dict)
         or data.get("node_id") != f"{node_id:016x}"
+        or (
+            "ready" in data
+            and (type(data["ready"]) is not int or not 0 <= data["ready"] <= 0xFFFFFFFF)
+        )
         or type(data.get("active")) is not bool
         or type(data.get("executions")) is not int
         or not 0 <= data["executions"] <= 0xFFFFFFFF

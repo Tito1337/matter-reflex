@@ -12,7 +12,10 @@ bool replace_image(const uint8_t *data, size_t size);
 bool transfer(const char *frame, size_t length);
 const char *rules_hash();
 bool active();
-bool handles(const reflex::Rule &rule);
+// Snapshot once per incoming report, before dispatching any of its rows.
+enum class Handling { unavailable, direct_only, all };
+Handling handling();
+uint32_t direct_ready_mask();
 uint32_t executions();
 uint64_t self_node();
 uint64_t fabric_id();

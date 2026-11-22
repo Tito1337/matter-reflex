@@ -1,6 +1,8 @@
 """Ownership, HA editor discovery and per-run reporting in direct mode."""
 
+import asyncio
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -12,11 +14,12 @@ from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import condition, entity_registry, label_registry
 from homeassistant.helpers.condition import ConditionConfig
 
-from custom_components.matter_reflex import runtime as runtime_module
+from custom_components.matter_reflex import ownership
 from custom_components.matter_reflex.activity import Activity
 from custom_components.matter_reflex.compiler import ActivityRule
 from custom_components.matter_reflex.condition import AdvancedHandlers
 from custom_components.matter_reflex.runtime import Runtime
+from custom_components.matter_reflex.wire import Rule
 
 
 @pytest.mark.asyncio
@@ -60,11 +63,21 @@ async def test_ha_checks_ownership_at_trigger_time(
     monkeypatch, normal, degraded, healthy, expired
 ):
     rt = Runtime.__new__(Runtime)
-    rt.esp_deadline = 10
+    monkeypatch.setattr(ownership, "monotonic", lambda: 0)
+    row = ActivityRule(
+        "automation.test",
+        Rule(1, 5, 2, 6, 1, 7, 1, 0, direct=True),
+        "light.test",
+        "event.button",
+    )
+    rt.desired_rules = {1: row}
+    rt.monitor = SimpleNamespace(ready_hash="verified", ready_mask=1)
+    rt.activity = SimpleNamespace(image_hash="verified", rules={1: row})
     entry = SimpleNamespace(
         state=ConfigEntryState.LOADED, domain="matter_reflex", runtime_data=rt
     )
     rt.hass = SimpleNamespace(
+        data={},
         state=CoreState.running,
         config_entries=SimpleNamespace(async_get_entry=lambda _: entry),
     )
@@ -83,7 +96,10 @@ async def test_ha_checks_ownership_at_trigger_time(
             }.get
         ),
     )
-    variables = {"this": {"entity_id": "automation.test"}}
+    variables = {
+        "this": {"entity_id": "automation.test"},
+        "trigger": {"entity_id": "event.button"},
+    }
     options = {
         "esp": "esp-entry",
         "normal_handler": normal,
@@ -92,12 +108,33 @@ async def test_ha_checks_ownership_at_trigger_time(
     gate = AdvancedHandlers(rt.hass, ConditionConfig(options=options))
     await gate.async_setup()
     try:
-        monkeypatch.setattr(runtime_module, "monotonic", lambda: 9.99)
+        monkeypatch.setattr(ownership, "monotonic", lambda: 9.99)
         assert gate.async_check(variables=variables) is healthy
-        monkeypatch.setattr(runtime_module, "monotonic", lambda: 10)
+        monkeypatch.setattr(ownership, "monotonic", lambda: 10)
         assert gate.async_check(variables=variables) is expired
-        rt.esp_deadline = 20
+        ownership.lease_for(rt.hass, "esp-entry").renew()
         assert gate.async_check(variables=variables) is healthy
+        if degraded == "ha":
+            entry.state = ConfigEntryState.SETUP_RETRY
+            assert not gate.async_check(variables=variables)
+            monkeypatch.setattr(ownership, "monotonic", lambda: 20)
+            assert gate.async_check(variables=variables)
+            entry.state = ConfigEntryState.LOADED
+            ownership.lease_for(rt.hass, "esp-entry").renew()
+        if normal == "esp" and degraded == "ha":
+            # The ESP is reachable but its image is absent, rejected or stale.
+            rt.desired_rules.clear()
+            assert gate.async_check(variables=variables)
+            rt.desired_rules = {1: replace(row, row=replace(row.row, value=42))}
+            assert gate.async_check(variables=variables)
+            rt.desired_rules = {1: row}
+            rt.monitor.ready_mask = 0
+            assert gate.async_check(variables=variables)
+            rt.monitor.ready_mask = 1
+            rt.monitor.ready_hash = "old"
+            assert gate.async_check(variables=variables)
+            rt.monitor.ready_hash = "verified"
+            assert not gate.async_check(variables=variables)
         reg.labels.clear()
         assert gate.async_check(variables=variables)
         reg.labels.add("label-123")
@@ -106,22 +143,36 @@ async def test_ha_checks_ownership_at_trigger_time(
         gate.async_unload()
 
 
-def test_activity_combines_target_results_and_deduplicates_reconnect(monkeypatch):
+@pytest.mark.parametrize("direct", [True, False])
+def test_activity_combines_target_results_and_deduplicates_reconnect(
+    monkeypatch, direct
+):
     from custom_components.matter_reflex import activity as module
 
     records = Mock()
     monkeypatch.setattr(module, "async_log_entry", records)
     activity = Activity.__new__(Activity)
     activity.runtime = SimpleNamespace(
-        hass=SimpleNamespace(states=SimpleNamespace(get=lambda _: None))
+        dirty=asyncio.Event(),
+        hass=SimpleNamespace(states=SimpleNamespace(get=lambda _: None)),
     )
     activity.store = Mock()
-    activity.image_hash = "verified"
+    activity.image_hash = None
+    activity.rules = {}
     activity.seen = deque(maxlen=128)
-    activity.rules = {
-        i: ActivityRule("automation.lights", (5, 2, 6, 1), f"light.lamp_{i}")
+    activity.pending = {}
+    activity.wake = asyncio.Event()
+    rules = {
+        i: ActivityRule(
+            "automation.lights",
+            Rule(i, 5, 2, 6, 1, i, 1, 0, direct=direct),
+            f"light.lamp_{i}",
+            "event.button",
+        )
         for i in (1, 2)
     }
+
+    activity.configure("verified", rules)
 
     def snapshot(rows, image="verified"):
         return {
@@ -135,11 +186,34 @@ def test_activity_combines_target_results_and_deduplicates_reconnect(monkeypatch
     activity.record(snapshot(rows[:2]))
     activity.record(snapshot(rows, "wrong-image"))
     records.assert_not_called()
-    activity.record(snapshot(rows))
+    # The first target has already rotated out of the board journal.
+    activity.configure(
+        "verified",
+        {i: replace(row, entity_id="automation.renamed") for i, row in rules.items()},
+    )
+    activity.record(snapshot(rows[2:]))
     activity.record(snapshot(rows))
     records.assert_called_once()
     message = records.call_args.args[2]
+    assert ("Direct reflex" if direct else "Fallback reflex") in message
     assert "lamp_1 (accepted)" in message and "lamp_2 (transport error)" in message
-    assert records.call_args.args[-1] == "automation.lights"
+    assert records.call_args.args[-1] == "automation.renamed"
     activity.record(snapshot(rows + [(14, 2, 0)]))
     assert records.call_count == 2
+    activity.record(snapshot([(200, 1, 0)]))
+    activity.configure("next", activity.rules)
+    activity.record(snapshot([(200, 2, 0)], "next"))
+    assert records.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_unloaded_entry_grace_starts_before_first_trigger(monkeypatch, tmp_path):
+    hass = HomeAssistant(str(tmp_path))
+    hass.state = CoreState.running
+    monkeypatch.setattr(ownership, "monotonic", lambda: 100)
+    lease = ownership.lease_for(hass, "retrying")
+    assert not lease.expired(hass)
+    monkeypatch.setattr(ownership, "monotonic", lambda: 111)
+    assert ownership.lease_for(hass, "retrying").expired(hass)
+    lease.renew()
+    assert not lease.expired(hass)

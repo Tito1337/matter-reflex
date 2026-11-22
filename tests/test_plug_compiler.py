@@ -2,17 +2,25 @@
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from homeassistant.components.automation.const import DATA_COMPONENT
 from homeassistant.components.matter import helpers
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.core import CoreState
 from homeassistant.helpers import entity_registry, label_registry
+from homeassistant.helpers.condition import ConditionConfig
 from matter_server.client.models.node import MatterNode
 from matter_server.common.models import MatterNodeData
 
+from custom_components.matter_reflex import runtime as runtime_module
+from custom_components.matter_reflex.activity import Activity
 from custom_components.matter_reflex.compiler import async_compile
+from custom_components.matter_reflex.condition import ReflexMode
 from custom_components.matter_reflex.const import VENDOR
-from custom_components.matter_reflex.wire import ROW, encode
+from custom_components.matter_reflex.runtime import Runtime
+from custom_components.matter_reflex.wire import ROW, digest, encode
 
 
 async def compile_plug(
@@ -26,6 +34,7 @@ async def compile_plug(
     platform="matter",
     disabled_by=None,
     category=None,
+    original_class=None,
     reflex_node=99,
     conditions=None,
     tagged=True,
@@ -75,6 +84,7 @@ async def compile_plug(
     switch = registered("switch", "anything", f"ref-1-{uid}")
     switch.platform, switch.disabled_by = platform, disabled_by
     switch.entity_category = category
+    switch.original_device_class = original_class
     automation = registered("automation", "socket", "slot")
     regs = {e.entity_id: e for e in (switch, trigger, automation)}
     cfg = {
@@ -192,6 +202,8 @@ async def test_reflex_label_alone_selects_fallback(monkeypatch):
     fallback = await compile_plug(monkeypatch)
     other = await compile_plug(monkeypatch, label_name="Fallback reflex")
     assert ROW.unpack(fallback.image[8:])[7] == 2
+    row = next(iter(fallback.activity.values()))
+    assert not row.direct and row.source_entity == "event.tester"
     assert other.image == encode([]) and not other.permissions
 
 
@@ -236,3 +248,91 @@ async def test_nested_ownership_condition_reports_repair(monkeypatch):
     result = await compile_plug(monkeypatch, conditions=[nested], entry_id="board-a")
     assert result.image == encode([])
     assert "top level" in result.issues["automation.socket"]
+
+
+@pytest.mark.asyncio
+async def test_generic_matter_outlet(monkeypatch):
+    result = await compile_plug(
+        monkeypatch, types=(0x0013,), uid="MatterSwitch-6-0", original_class="outlet"
+    )
+    assert result.permissions[42] == {(1, 6, 3)}
+    assert not result.issues
+
+
+@pytest.mark.asyncio
+async def test_direct_handoff_requires_accepted_image_and_source(monkeypatch, tmp_path):
+    from homeassistant.core import HomeAssistant
+
+    options = {"mode": "direct", "esp": "board-a"}
+    policy = {"condition": "matter_reflex.mode", "options": options}
+    supported = await compile_plug(monkeypatch, conditions=[policy], entry_id="board-a")
+    rejected = await compile_plug(
+        monkeypatch,
+        entry_id="board-a",
+        conditions=[
+            policy,
+            {"condition": "template", "value_template": "{{ true }}"},
+        ],
+    )
+    hass = HomeAssistant(str(tmp_path))
+    hass.state = CoreState.running
+    rt = Runtime.__new__(Runtime)
+    entry = SimpleNamespace(
+        entry_id="board-a",
+        data={"matter_entry_id": "fabric"},
+        domain="matter_reflex",
+        state=ConfigEntryState.LOADED,
+        runtime_data=rt,
+    )
+    hass.config_entries = SimpleNamespace(async_get_entry=lambda _: entry)
+    rt.hass, rt.entry, rt.node = hass, entry, 99
+    rt.activity = Activity(rt)
+    rt.direct_mask = 0
+    rt.acl_synced = False
+    rt.synced_permissions = None
+    rt.client = Mock()
+    rt.acls = SimpleNamespace(reconcile=AsyncMock())
+    rt.issue = rt.clear_issue = Mock()
+    actual = digest(encode([]))
+
+    async def refresh(_):
+        rt.status = {"hash": actual}
+        rt.monitor.ready_hash = actual
+        return rt.status
+
+    rt.monitor = SimpleNamespace(refresh=refresh, wake=Mock(), ready_mask=0)
+    rt.status = None
+    rt.transfer = AsyncMock(side_effect=RuntimeError("image rejected"))
+    monkeypatch.setattr(
+        runtime_module,
+        "async_compile",
+        AsyncMock(side_effect=[supported, supported, rejected]),
+    )
+    monkeypatch.setattr(runtime_module, "is_reflex", lambda _: True)
+    monkeypatch.setattr(
+        runtime_module.ir, "async_get", lambda _: SimpleNamespace(issues={})
+    )
+    checker = ReflexMode(hass, ConditionConfig(options=options))
+    await checker.async_setup()
+    variables = {
+        "this": {"entity_id": "automation.socket"},
+        "trigger": {"entity_id": "event.tester"},
+    }
+    try:
+        with pytest.raises(RuntimeError, match="image rejected"):
+            await rt.sync()
+        assert checker.async_check(variables=variables)
+
+        async def install(_, image):
+            nonlocal actual
+            actual = digest(image)
+
+        rt.transfer = install
+        await rt.sync()
+        assert checker.async_check(variables=variables)
+        rt.monitor.ready_mask = 1
+        assert not checker.async_check(variables=variables)
+        await rt.sync()
+        assert checker.async_check(variables=variables)
+    finally:
+        checker.async_unload()

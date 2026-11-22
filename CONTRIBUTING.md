@@ -46,6 +46,8 @@ set -o pipefail
 ./dev ha python - < tests/contract/encode.py | ./dev idf bash tools/test-engine
 ```
 
+Run `./dev test-sensors` to exercise the README contact and motion automations plus leak and environmental rules on an offline Matter.js network. This uses the HA test image and a host C++17 compiler with static linking, falling back to the pinned IDF image if g++ is absent. The host engine processes subscription reports with a deterministic lease clock. The simulated peers execute the resulting commands.
+
 The contract run also checks the firmware lease deadline. Run `./dev test-lease` to commission a pair of simulated nodes with the pinned Matter Server SDK and verify that each named action arrives in a single encrypted UDP datagram. Podman pulls the test image on first use. The test runs without network access or household credentials.
 
 If you change the firmware or SDK, also build the application for the microcontroller. Linking checks CHIP API compatibility and size limits that the host-side engine test does not cover.

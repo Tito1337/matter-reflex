@@ -9,6 +9,7 @@ from homeassistant.helpers import label_registry as lr
 from homeassistant.helpers.condition import Condition
 
 from .const import DOMAIN, REFLEX_LABEL
+from .ownership import lease_for
 from .policy import ADVANCED_CONDITION, HANDLERS, MODE_CONDITION, MODES, handlers_for
 
 
@@ -39,6 +40,7 @@ class ReflexMode(Condition):
         super().__init__(hass, config)
         self.entry_id = config.options["esp"]
         self.handlers = handlers_for(self.kind, config.options)
+        self.lease = lease_for(hass, self.entry_id)
 
     def _async_check(self, *, variables=None, **kwargs):
         if self.handlers.normal == "ha":
@@ -55,6 +57,10 @@ class ReflexMode(Condition):
             return True
         if self.handlers.degraded != "ha":
             return False
+        if self.lease.expired(self._hass):
+            return True
+        if self.handlers.normal != "esp":
+            return False
         entry = self._hass.config_entries.async_get_entry(self.entry_id)
         if (
             entry is None
@@ -63,7 +69,10 @@ class ReflexMode(Condition):
         ):
             return False
         runtime = getattr(entry, "runtime_data", None)
-        return bool(runtime and runtime.esp_lease_expired)
+        trigger = (variables or {}).get("trigger") or {}
+        return bool(
+            runtime and not runtime.esp_handles(entity_id, trigger.get("entity_id"))
+        )
 
 
 class AdvancedHandlers(ReflexMode):

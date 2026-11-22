@@ -14,6 +14,7 @@ from custom_components.matter_reflex import (
     native,
 )
 from custom_components.matter_reflex.const import CLUSTER, VENDOR
+from custom_components.matter_reflex.ownership import EspLease
 from custom_components.matter_reflex.runtime import Runtime
 from custom_components.matter_reflex.transport import ReflexError
 
@@ -54,6 +55,9 @@ def lease_clock(monkeypatch):
     monkeypatch.setattr(
         "custom_components.matter_reflex.runtime.monotonic", lambda: clock.now
     )
+    monkeypatch.setattr(
+        "custom_components.matter_reflex.ownership.monotonic", lambda: clock.now
+    )
     monkeypatch.setattr(asyncio, "sleep", advance)
     return clock
 
@@ -71,6 +75,7 @@ async def test_lease_dispatch_slots_survive_lost_renewal(
     runtime.hass = SimpleNamespace(state=CoreState.running)
     runtime.node = 31
     runtime.clear_issue = Mock()
+    runtime.lease = EspLease()
     starts = []
     deadlines = []
 
@@ -81,7 +86,7 @@ async def test_lease_dispatch_slots_survive_lost_renewal(
 
     async def send(*args, **kwargs):
         starts.append(lease_clock.now)
-        deadlines.append(runtime.esp_deadline)
+        deadlines.append(runtime.lease.deadline)
         if len(starts) == 2:
             lease_clock.now += miss_duration
             raise failure
@@ -99,7 +104,7 @@ async def test_lease_dispatch_slots_survive_lost_renewal(
     assert starts == pytest.approx(expected)
     # A failed or cancelled renewal cannot extend the reciprocal HA deadline.
     assert deadlines[1:3] == pytest.approx([11.25, 11.25])
-    assert runtime.esp_deadline == pytest.approx(starts[-1] + 10.25)
+    assert runtime.lease.deadline == pytest.approx(starts[-1] + 10.25)
 
 
 @pytest.mark.asyncio
@@ -118,6 +123,7 @@ async def test_heartbeat_is_one_named_action_every_interval(monkeypatch, status)
     )
     runtime.client = Mock(return_value=client)
     runtime.clear_issue = Mock()
+    runtime.lease = EspLease()
     monkeypatch.setattr(
         asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError()])
     )
@@ -181,6 +187,7 @@ async def test_lease_repair_backs_off_and_clears_after_firmware_upgrade(lease_cl
     runtime.node = 31
     runtime.status = None
     runtime.issue, runtime.clear_issue = Mock(), Mock()
+    runtime.lease = EspLease()
     client = SimpleNamespace(
         read_attribute=AsyncMock(
             side_effect=[
@@ -215,6 +222,7 @@ async def test_stale_version_on_downgrade_rejected_then_vendor_lease_negotiated(
     runtime.hass = SimpleNamespace(state=CoreState.running)
     runtime.node = 31
     runtime.issue, runtime.clear_issue = Mock(), Mock()
+    runtime.lease = EspLease()
     err = SDKStackError("UnsupportedCluster")
     err.status = 0xC3
     client = SimpleNamespace(
@@ -281,6 +289,7 @@ async def test_upgrade_from_working_legacy_transport_selects_named_action(monkey
     runtime.hass = SimpleNamespace(state=CoreState.running)
     runtime.node = 31
     runtime.clear_issue = Mock()
+    runtime.lease = EspLease()
     client = SimpleNamespace(
         read_attribute=AsyncMock(side_effect=[identity(4), identity(5)]),
         write_attribute=AsyncMock(return_value=[{"Status": 0}]),
@@ -300,6 +309,7 @@ async def test_upgrade_from_working_legacy_transport_selects_named_action(monkey
 @pytest.mark.asyncio
 async def test_native_transfer_is_chunked_and_verified_per_frame():
     runtime = Runtime.__new__(Runtime)
+    runtime.direct_mask = 0
     runtime.node, runtime.channel = 31, None
     client = SimpleNamespace(write_attribute=AsyncMock(return_value=[{"Status": 0}]))
     image = bytes(range(220))
@@ -322,6 +332,7 @@ async def test_native_transfer_is_chunked_and_verified_per_frame():
 @pytest.mark.asyncio
 async def test_http_mode_still_prefers_matter_status_then_falls_back():
     runtime = Runtime.__new__(Runtime)
+    runtime.direct_mask = 0
     runtime.node, runtime.channel = (
         31,
         SimpleNamespace(status=AsyncMock(return_value="fallback")),

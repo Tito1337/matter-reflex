@@ -23,6 +23,10 @@ class StatusMonitor:
         self.runtime = runtime
         self.client = None
         self.online = False
+        self.ready_reported = False
+        self.last_ready_report = (0, None)
+        self.ready_hash = None
+        self.ready_mask = 0
         self.bound_node = None
         self.removed = False
         self.reported_fields = set()
@@ -76,6 +80,14 @@ class StatusMonitor:
         self.detach()
         self.client = client
         if client is not None:
+            self.unsubscribe.append(
+                client.subscribe_events(
+                    self.readiness,
+                    EventType.ATTRIBUTE_UPDATED,
+                    self.runtime.node,
+                    native.READY_PATH,
+                )
+            )
             for path in native.STATUS_PATHS:
                 self.unsubscribe.append(
                     client.subscribe_events(
@@ -108,6 +120,7 @@ class StatusMonitor:
         self.changes.clear()
         self.check_expiration = not online and not removed
         self.reported_fields.clear()
+        self.ready_reported = False
         self.runtime.acl_synced = False
         self.publish(None)
         self.wake.set()
@@ -128,6 +141,11 @@ class StatusMonitor:
 
     def publish(self, status):
         rt = self.runtime
+        if status is not None:
+            # Keep the last verified ownership through a transient disconnect.
+            # The reciprocal lease independently bounds how long HA will yield.
+            self.ready_hash = status["hash"]
+            self.ready_mask = status.get("ready", 0)
         if status != rt.status:
             if (
                 status is None
@@ -143,6 +161,22 @@ class StatusMonitor:
                 and status["hash"] != rt.target_hash
             ):
                 rt.dirty.set()
+
+    @callback
+    def readiness(self, event, value):
+        # Re-read the mask with its image hash over the configured channel.
+        if not self.online or type(value) is not int:
+            return
+        self.last_ready_report = (self.last_ready_report[0] + 1, value)
+        if not self.lock.locked():
+            self.ready_reported = True
+        status = self.runtime.status
+        if (
+            self.runtime.direct_mask
+            and status is not None
+            and value != status.get("ready")
+        ):
+            self.wake.set()
 
     @callback
     def attribute(self, path, event, value):
@@ -166,19 +200,26 @@ class StatusMonitor:
             self.reported_fields.add(key)
         status = self.runtime.status
         if status is not None:
-            self.publish({**status, key: value})
+            updated = {**status, key: value}
+            if key == "hash" and value != status["hash"]:
+                updated.pop("ready", None)
+                if self.runtime.direct_mask:
+                    self.wake.set()
+            self.publish(updated)
 
     async def refresh(self, client):
         async with self.lock:
             if client is not None and client is not self.client:
                 raise ReflexError("Matter client changed before status refresh")
             previously_confirmed = self.confirmed
+            ready_sequence = self.last_ready_report[0]
             generation, sequence = self.generation, self.sequence
             async with asyncio.timeout(10):
                 latest = await self.runtime.read_status(client)
             if generation != self.generation:
                 raise ReflexError("Matter connection changed during status refresh")
             # A newer report can arrive while the HTTP/IM read is in flight.
+            read_hash = latest["hash"]
             latest = {
                 **latest,
                 **{
@@ -187,6 +228,14 @@ class StatusMonitor:
                     if index > sequence
                 },
             }
+            sequence_now, reported_ready = self.last_ready_report
+            if latest["hash"] != read_hash or (
+                ready_sequence != sequence_now
+                and "ready" in latest
+                and latest["ready"] != reported_ready
+            ):
+                latest.pop("ready", None)
+                self.wake.set()
             self.publish(latest)
             if previously_confirmed and not self.confirmed:
                 self.wake.set()
@@ -202,6 +251,18 @@ class StatusMonitor:
             and rt.status is not None
         )
 
+    def readiness_poll(self):
+        rt = self.runtime
+        if (
+            not self.online
+            or self.ready_reported
+            or not rt.direct_mask
+            or rt.status is None
+            or rt.status["hash"] != rt.target_hash
+        ):
+            return None
+        return 4 if self.ready_mask != rt.direct_mask else 30
+
     async def run(self):
         force = True
         while True:
@@ -210,7 +271,7 @@ class StatusMonitor:
                 self.runtime.channel is not None and not self.removed
             )
             delay = None
-            if route and (force or not self.confirmed):
+            if route and (force or not self.confirmed or self.readiness_poll()):
                 try:
                     latest = await self.refresh(self.client if self.online else None)
                 except CHANNEL_ERRORS:
@@ -220,6 +281,11 @@ class StatusMonitor:
                 else:
                     if not self.confirmed:
                         delay = UNCONFIRMED_INTERVAL
+                    readiness_delay = self.readiness_poll()
+                    if readiness_delay is not None:
+                        delay = (
+                            min(delay, readiness_delay) if delay else readiness_delay
+                        )
                     # An immediate authenticated HTTP read during an outage can
                     # still see the final HA lease. Observe its expiry once.
                     if self.check_expiration:
