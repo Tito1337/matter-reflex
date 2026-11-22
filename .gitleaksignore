@@ -1,0 +1,6 @@
+# ESPHome's documented public Thread dataset used in disposable builds.
+4ca97ed1ad4be1e3cf7b80ef63a6b497b6ab6a22:.github/workflows/esphome.yml:thread-operational-dataset:31
+0b7899c0588de5349740b0b983bfde9bbbc09fb0:tools/check-esphome:thread-operational-dataset:24
+# Upstream example Wi-Fi defaults used by the simulated border router.
+9efe62d90b8501108d84904f8526a6775d456ed4:tests/lab/c6/router.defaults:wifi-credential:6
+9efe62d90b8501108d84904f8526a6775d456ed4:tests/lab/c6/router.defaults:wifi-credential:7

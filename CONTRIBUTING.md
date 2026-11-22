@@ -4,6 +4,16 @@ The Python compiler decides whether Home Assistant can delegate an entire automa
 
 Write documentation, source comments, command-line messages and examples in English. Home Assistant interface translations belong in `custom_components/matter_reflex/translations/`.
 
+## Check staged changes for secrets
+
+Keep household Thread datasets, Wi-Fi credentials and API keys in local provisioning files. Use `!secret` references in shared ESPHome YAML. Run `pre-commit install` once per clone to enable the Gitleaks hook. With the Gitleaks CLI installed, you can also check staged changes directly.
+
+```sh
+gitleaks git --pre-commit --staged --redact=100
+```
+
+CI scans the commit history on pushes and pull requests. It reports the file, line, rule and commit. If a live credential reached a remote, rotate it even if a later commit removed it.
+
 ## Start with the ESPHome example
 
 From a Linux checkout with Bash and rootless Podman, validate the [example node](examples/extend-node.yaml) and its downstream text sensor. The helper pulls the pinned toolchain on first use, generates disposable credentials and cleans up its temporary build. You can run it without a board or access to a household Thread network.

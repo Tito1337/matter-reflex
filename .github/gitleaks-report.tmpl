@@ -1,0 +1,1 @@
+{{range .}}{{printf "%q:%d (%s)" .File .StartLine .RuleID}}{{if .Commit}} in {{.Commit}}{{end}}{{"\n"}}{{end}}

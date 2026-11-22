@@ -1,0 +1,54 @@
+title = "Matter Reflex secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "thread-operational-dataset"
+description = "Thread operational dataset in configuration, console input or CLI output"
+regex = '''(?i)\b(?:thread[_-]?(?:tlv|dataset)|(?:active[_-]?)?dataset|tlv)["']?[ \t]*(?:[:=][ \t]*|[ \t]+(?:set[ \t]+(?:active|pending)[ \t]+)?)["']?(?:0x)?([a-f0-9]{64,})\b'''
+secretGroup = 1
+
+[[rules]]
+id = "thread-network-key"
+description = "Thread network key or commissioning key"
+regex = '''(?i)\b(?:(?:ot_)?thread[_-]?)?(?:network[ _-]?key|master[ _-]?key|pskc)["']?[ \t]*(?:[:=][ \t]*|[ \t]+)["']?(?:0x)?([a-f0-9]{32})\b'''
+secretGroup = 1
+
+[[rules]]
+id = "reflex-transfer-key"
+description = "Matter Reflex rule-transfer key"
+regex = '''(?im)(?:\b(?:reflex[_-])?transfer[_-]key["']?[ \t]*[:=][ \t]*|^[ \t]*key[ \t]+)["']?([a-f0-9]{64})\b'''
+secretGroup = 1
+
+[[rules]]
+id = "esphome-api-encryption-key"
+description = "Base64-encoded ESPHome native API encryption key"
+regex = '''(?im)^[ \t]*["']?(?:(?:reflex_)?api_key|key)["']?[ \t]*[:=][ \t]*["']?([A-Za-z0-9+/]{43}=)'''
+secretGroup = 1
+
+[[rules]]
+id = "wifi-credential"
+description = "Literal Wi-Fi SSID, password or PSK in config"
+regex = '''(?im)^[ \t]*(?:-[ \t]+)?["']?(?:(?:(?:config_example_)?wi[_-]?fi|wlan)[_-](?:ssid|pass(?:word|phrase)|psk)|ssid|password)["']?[ \t]*[:=][ \t]*("[^"\r\n]+"|'[^'\r\n]+'|[^ \t\r\n"'#][^\r\n]*?)[ \t]*,?[ \t]*(?:#.*)?\r?$'''
+secretGroup = 1
+
+[[rules.allowlists]]
+description = "Configuration references"
+regexes = [
+  '''^!secret[ \t]+[\w.-]+$''',
+  '''^["']?\$\{[\w.-]+\}["']?$''',
+  '''^["']?\{\{[^}]+\}\}["']?$''',
+]
+
+[[rules.allowlists]]
+description = "Python-generated disposable passwords"
+condition = "AND"
+paths = ['''\.py$''']
+regexes = ['''^secrets\.token_(?:hex|urlsafe)\(\d*\)$''']
+
+[[rules]]
+id = "thread-dataset-dump"
+description = "Hex dump of a Thread dataset containing a Network Key TLV"
+regex = '''(?im)^[ \t]*(?:["']result["'][ \t]*:[ \t]*)?["']?((?:[a-f0-9]{2}){0,220}0510[a-f0-9]{32}(?:[a-f0-9]{2}){0,220})["']?[, \t]*\r?$'''
+secretGroup = 1
