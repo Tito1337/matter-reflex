@@ -64,6 +64,14 @@ case "$mode" in
         fi
         exec "${podman_cmd[@]}" "${run[@]}" --device "$device" --env "ESPPORT=$device" --env "ESPTOOL_PORT=$device" "$idf_image" bash -c 'cd /work && exec "$@"' bash "$@"
         ;;
+    lab)
+        if [[ ${1:-} == smoke ]]; then
+            exec "${podman_cmd[@]}" run --rm --network none --volume "$project/tests/lab:/app/reflex-lab:ro,z" \
+                --entrypoint node "$controller_image" /app/reflex-lab/smoke.mjs
+        fi
+        export REFLEX_LAB_IMAGE="$controller_image" REFLEX_LAB_HA_IMAGE="$ha_image"
+        exec python3 "$project/tests/lab/lab.py" "$@"
+        ;;
     test-sensors)
         scratch=$(mktemp -d)
         trap 'rm -rf -- "$scratch"' EXIT
@@ -88,7 +96,7 @@ case "$mode" in
         exec "${podman_cmd[@]}" "${run[@]}" --network none --entrypoint "" "$ha_image" "$@"
         ;;
     *)
-        echo "Usage: ./dev {esphome|matter|matter-usb|factory|idf|usb|ha|test-lease|test-sensors} command [arguments...]" >&2
+        echo "Usage: ./dev {esphome|matter|matter-usb|factory|idf|usb|ha|lab|test-lease|test-sensors} command [arguments...]" >&2
         exit 2
         ;;
 esac

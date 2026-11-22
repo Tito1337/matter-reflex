@@ -27,3 +27,7 @@ jobs:
         run: ./dev test-lease
       - name: Exercise subscribed sensors and actuators on a simulated Matter network
         run: ./dev test-sensors
+      - name: Verify the outage lab peers, gestures and authenticated command receipts
+        run: ./dev lab smoke
+      - name: Commission virtual peers and exercise both Home Assistant lab automations
+        run: ./dev lab smoke-ha
