@@ -6,9 +6,10 @@ import os
 import sys
 
 import aiohttp
+from sensor_cases import SENSOR_CASES
 
 
-async def setup(base, codes):
+async def setup(base, codes, *, sensors=False):
     async with (
         aiohttp.ClientSession(
             headers={"Authorization": "Bearer " + os.environ["HA_TOKEN"]}
@@ -36,15 +37,29 @@ async def setup(base, codes):
             await request("matter/commission", code=code, network_only=True)
 
         # Match HA's interviewed nodes by the fixture serial numbers. Entity names can be renamed.
+        fixtures = [
+            ("event", "REFLEXLABBUTTON", "event", 1),
+            ("light", "REFLEXLABTARGETS", "light", 1),
+            ("cover", "REFLEXLABTARGETS", "cover", 2),
+        ]
+        if sensors:
+            fixtures.extend(
+                [
+                    ("contact", "REFLEXLABBUTTON", "binary_sensor", 2),
+                    ("occupancy", "REFLEXLABBUTTON", "binary_sensor", 3),
+                    ("leak", "REFLEXLABBUTTON", "binary_sensor", 4),
+                    ("temperature", "REFLEXLABBUTTON", "sensor", 5),
+                    ("humidity", "REFLEXLABBUTTON", "sensor", 6),
+                    ("outlet", "REFLEXLABTARGETS", "switch", 3),
+                    ("dimmer", "REFLEXLABTARGETS", "light", 4),
+                    ("lift", "REFLEXLABTARGETS", "cover", 5),
+                ]
+            )
         for _ in range(90):
             devices = await request("config/device_registry/list")
             entities = await request("config/entity_registry/list")
             found = {}
-            for serial, domain in (
-                ("REFLEXLABBUTTON", "event"),
-                ("REFLEXLABTARGETS", "light"),
-                ("REFLEXLABTARGETS", "cover"),
-            ):
+            for name, serial, domain, endpoint in fixtures:
                 ids = {d["id"] for d in devices if d.get("serial_number") == serial}
                 ids.update(d["id"] for d in devices if d.get("via_device_id") in ids)
                 matches = [
@@ -54,12 +69,13 @@ async def setup(base, codes):
                     and e.get("device_id") in ids
                     and e["entity_id"].startswith(domain + ".")
                     and not e.get("disabled_by")
+                    and e["unique_id"].rsplit("-", 3)[0].endswith(f"-{endpoint}")
                 ]
                 if len(matches) > 1:
-                    raise RuntimeError(f"Ambiguous lab {domain} entities: {matches}")
+                    raise RuntimeError(f"Ambiguous lab {name} entities: {matches}")
                 if matches:
-                    found[domain] = matches[0]
-            if len(found) == 3:
+                    found[name] = matches[0]
+            if len(found) == len(fixtures):
                 break
             await asyncio.sleep(1)
         else:
@@ -71,6 +87,7 @@ async def setup(base, codes):
         label = next((x for x in labels if x["name"].casefold() == "reflex"), None)
         if label is None:
             label = await request("config/label_registry/create", name="reflex")
+        rules = []
         for gesture, service, target, data in (
             ("multi_press_2", "light.turn_on", found["light"], {}),
             (
@@ -80,20 +97,31 @@ async def setup(base, codes):
                 {"tilt_position": 75},
             ),
         ):
-            rule_id = "matter_reflex_lab_" + gesture
+            trigger = {
+                "trigger": "event.received",
+                "target": {"entity_id": found["event"]},
+                "options": {"event_type": [gesture]},
+            }
+            rules.append((gesture, trigger, service, target, data))
+        if sensors:
+            for case in SENSOR_CASES:
+                trigger = {
+                    "trigger": "state" if "to" in case.bounds else "numeric_state",
+                    "entity_id": found[case.sensor],
+                    **case.bounds,
+                }
+                rules.append(
+                    (case.sensor, trigger, case.service, found[case.target], case.data)
+                )
+        for name, trigger, service, target, data in rules:
+            rule_id = "matter_reflex_lab_" + name
             action = {"action": service, "target": {"entity_id": target}}
             if data:
                 action["data"] = data
             rule = {
-                "alias": "Matter Reflex Lab " + gesture,
+                "alias": "Matter Reflex Lab " + name,
                 "mode": "single",
-                "triggers": [
-                    {
-                        "trigger": "event.received",
-                        "target": {"entity_id": found["event"]},
-                        "options": {"event_type": [gesture]},
-                    }
-                ],
+                "triggers": [trigger],
                 "actions": [action],
             }
             async with http.post(

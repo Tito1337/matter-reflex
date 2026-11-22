@@ -12,6 +12,8 @@ from ipaddress import ip_network
 from pathlib import Path
 from uuid import uuid4
 
+from sensor_cases import SENSOR_CASES
+
 
 def configure_ha(server_address):
     # Runs inside the new HA container. The temporary admin token stays there.
@@ -69,7 +71,7 @@ def configure_ha(server_address):
             f"Could not connect HA to the test Matter Server: {response.json().get('errors')}"
         )
     commissioning = json.load(sys.stdin)
-    entities = asyncio.run(setup(base, commissioning["codes"]))
+    entities = asyncio.run(setup(base, commissioning["codes"], sensors=True))
     if commissioning["key"]:
         flow = session.post(flow_url, json={"handler": "matter_reflex"}, timeout=30)
         flow.raise_for_status()
@@ -127,6 +129,66 @@ def wait_for_entity(online):
         time.sleep(1)
     raise RuntimeError(
         f"Timed out waiting for HA entity {entity} to become {'available' if online else 'unavailable'}"
+    )
+
+
+def sensor_phase(sender, peer_call, settle=4):
+    from lab import eventually
+
+    expected = []
+    state = {"plug": False, "on": False, "level": 1, "lift": 0}
+
+    def snapshot():
+        return peer_call("targets", "sensor-snapshot")
+
+    def delivered(previous, name):
+        observed = snapshot()
+        if observed["commands"] == previous:
+            return False
+        if observed["commands"] != expected:
+            raise RuntimeError(
+                f"After {name}: expected {expected}, received {observed}"
+            )
+        return observed == {"commands": expected, **state}
+
+    button_targets = peer_call("targets", "snapshot")
+    if snapshot()["commands"]:
+        raise RuntimeError(
+            f"Unexpected sensor command before the first input: {snapshot()}"
+        )
+    for case in SENSOR_CASES:
+        previous = expected.copy()
+        expected.append({**case.receipt, "sender": sender})
+        state.update(case.state_change)
+        peer_call("button", "sensor " + case.sensor)
+        eventually(
+            delivered,
+            f"{case.sensor} command and resulting actuator state",
+            previous,
+            case.sensor,
+            timeout=20,
+        )
+    peer_call("button", "sensor same-side")
+    time.sleep(settle)
+    if snapshot() != {"commands": expected, **state}:
+        raise RuntimeError(
+            f"Sensor rule fired again without a new crossing: {snapshot()}"
+        )
+    # Returning to closed, clear, dry or exactly the threshold rearms each rule.
+    peer_call("button", "sensor baseline")
+    time.sleep(settle)
+    if snapshot() != {"commands": expected, **state}:
+        raise RuntimeError(
+            f"Duplicate or unexpected actuation during sensor rearm: {snapshot()}"
+        )
+    if peer_call("targets", "snapshot") != button_targets:
+        raise RuntimeError(
+            "A sensor input changed the gesture-controlled lamp or blind"
+        )
+    peer_call("targets", "sensor-reset")
+    print(
+        f"Verified five sensor edges, actuator states and authenticated commands from node {sender}.",
+        flush=True,
     )
 
 
@@ -199,7 +261,7 @@ def smoke(with_board=False):
                     "--entrypoint",
                     "node",
                 ],
-                [SCRIPT, role],
+                [SCRIPT, role, "sensors"],
             )
         # Keep the address stored by HA across the Matter Server restart.
         net = json.loads(podman("network", "inspect", project))[0]
@@ -217,7 +279,7 @@ def smoke(with_board=False):
                 "--dcl-offline",
             ],
         )
-        config = "default_config:\nautomation: !include automations.yaml\n"
+        config = "homeassistant:\n  unit_system: metric\ndefault_config:\nautomation: !include automations.yaml\n"
         start(
             "ha",
             ha,
@@ -286,6 +348,7 @@ def smoke(with_board=False):
                 timeout=180,
             )
         controller = phase(None, 4, excluded_sender=reflex, peer_call=peer_call)
+        sensor_phase(controller, peer_call)
         eventually(subscribed, "Home Assistant subscriptions", controller, peer_call)
         if (
             board
@@ -303,9 +366,12 @@ def smoke(with_board=False):
             ):
                 raise RuntimeError("Matter Server was running when Reflex took over")
             phase(reflex, 4, peer_call=peer_call)
+            sensor_phase(reflex, peer_call)
             after = board.wait(
-                "two firmware executions",
-                lambda s: s["executions"] == active["executions"] + 2,
+                "one firmware execution per gesture and sensor edge",
+                lambda s: (
+                    s["executions"] == active["executions"] + 2 + len(SENSOR_CASES)
+                ),
             )
             if (
                 podman("inspect", "--format", "{{.State.Running}}", prefix + "server")
@@ -319,7 +385,14 @@ def smoke(with_board=False):
             peer_call("targets", "reset")
             peer_call("button", "double")
             peer_call("button", "long")
+            quiet_targets = peer_call("targets", "sensor-snapshot")
+            for case in SENSOR_CASES:
+                peer_call("button", "sensor " + case.sensor)
             time.sleep(4)
+            if peer_call("targets", "sensor-snapshot") != quiet_targets:
+                raise RuntimeError(
+                    "Sensor command delivered with the only controller stopped"
+                )
             if peer_call("targets", "snapshot") != {
                 "commands": [],
                 "on": False,
@@ -328,6 +401,7 @@ def smoke(with_board=False):
                 raise RuntimeError(
                     "Actuator received a command while its only controller was stopped"
                 )
+            peer_call("button", "sensor baseline")
             print("Both peers stayed available with Matter Server offline.", flush=True)
 
         def wait_ha(state):
@@ -357,6 +431,7 @@ def smoke(with_board=False):
         if board:
             board.wait("renewed lease after recovery", standby)
         phase(controller, 4, peer_call=peer_call)
+        sensor_phase(controller, peer_call)
         if (
             board
             and board.wait("standby after handback", standby)["executions"]

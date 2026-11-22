@@ -116,3 +116,49 @@ def test_outage_restores_server(monkeypatch, failure):
             ["10"] if failure == "before" else ["10", "stop", "42", "start"]
         )
     assert running
+
+
+@pytest.mark.parametrize(
+    ("fault", "message"),
+    [
+        ("sender", "After contact"),
+        ("fade", "After occupancy"),
+        ("state", "contact command and resulting actuator state"),
+        ("same-side", "without a new crossing"),
+        ("baseline", "during sensor rearm"),
+    ],
+)
+def test_sensor_phase_rejects_incorrect_evidence(monkeypatch, fault, message):
+    from ha_smoke import sensor_phase
+    from sensor_cases import SENSOR_CASES
+
+    cases = {case.sensor: case for case in SENSOR_CASES}
+    commands = []
+    state = {"plug": False, "on": False, "level": 1, "lift": 0}
+
+    def fixture(peer, command):
+        if command == "snapshot":
+            return {"commands": []}
+        if command == "sensor-snapshot":
+            return {"commands": commands.copy(), **state}
+        name = command.removeprefix("sensor ")
+        if name in cases:
+            case = cases[name]
+            receipt = {**case.receipt, "sender": "42"}
+            if fault == "sender":
+                receipt["sender"] = "99"
+            if fault == "fade" and name == "occupancy":
+                receipt["transition"] = 0
+            commands.append(receipt)
+            if fault != "state":
+                state.update(case.state_change)
+        elif name == fault:
+            commands.append(commands[-1])
+
+    def check_now(check, description, *args, timeout):
+        if not check(*args):
+            raise RuntimeError(description)
+
+    monkeypatch.setattr(lab, "eventually", check_now)
+    with pytest.raises(RuntimeError, match=message):
+        sensor_phase("42", fixture, settle=0)

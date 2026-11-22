@@ -1,6 +1,6 @@
 # Matter outage lab
 
-The lab runs two independent matter.js nodes. One exposes a momentary button. The other exposes a lamp on endpoint 1 and a tilt-capable blind on endpoint 2. The test operates the button through a container-local Unix socket. It observes incoming commands in the target's Matter handlers, including the sending session's node ID. Button input and target observation both work with Matter Server offline.
+The lab runs two independent matter.js nodes. One publishes inputs and the other receives actuator commands. The original scenario pairs a momentary button with a lamp and a tilt blind. The disposable HA runs also include five sensors, a plug, a dimmer and a lift shade. The test operates the button through a container-local Unix socket. It observes incoming commands in the target's Matter handlers, including the sending session's node ID. Button input and target observation both work with Matter Server offline.
 
 ## Run without a board
 
@@ -10,7 +10,7 @@ From the repository root on Linux with rootless Podman, run the protocol check. 
 ./dev lab smoke
 ```
 
-For a full Home Assistant check, install Python 3 on the host and build the project's pinned HA test image. On NixOS, `nix-shell -p python3` supplies the host interpreter. The command starts a fresh HA instance, Matter Server and both peers on an internal IPv6 Podman network. It commissions through HA, discovers the three entities, writes and labels the two automations, operates the button and checks the commands sent by HA. It then stops Matter Server, verifies that both peers remain available and quiet, restarts the server and repeats the gestures. It cleans up its containers and network when it exits. Podman needs IPv6 bridge networking for this check.
+For a full Home Assistant check, install Python 3 on the host and build the project's pinned HA test image. On NixOS, `nix-shell -p python3` supplies the host interpreter. The command starts a fresh HA instance, Matter Server and both peers on an internal IPv6 Podman network. It commissions through HA, discovers the fixture entities, installs seven labeled automations and checks HA’s commands at the actuators. It then stops Matter Server, verifies that both peers remain available and quiet, restarts the server and repeats the gestures and sensor changes. It cleans up its containers and network when it exits. Podman needs IPv6 bridge networking for this check.
 
 ```sh
 podman --cgroup-manager=cgroupfs build -f tools/Containerfile.ha -t localhost/matter-reflex-ha:2026.11.1 tools
@@ -27,13 +27,25 @@ On Linux x86-64 or AArch64, run the same command as the firmware workflow:
 
 The first run builds the pinned HA test image, downloads a checksum-pinned ESP-EMU release, builds this checkout’s ESP32-C6 firmware and builds ESP-IDF’s OpenThread border router example. Later runs reuse the builds under `firmware/build`. The host needs Python 3, rootless Podman with IPv6 networking, and a usable `/dev/net/tun`. The TAP and IPv6 route settings belong to a disposable container network namespace. Each run generates fresh factory data, fabric credentials and a Home Assistant instance. No board, USB forwarding, household credentials or live HA instance is required.
 
-Two emulator processes exchange 802.15.4 frames. The runner provisions the unmodified Reflex firmware through its USB console, waits for routed IPv6 and commissions it with the button and targets. The installed HA integration renews the lease over Matter. When the pinned Matter Server requests the documented HTTP fallback for rule transfers, the runner provisions a fresh key over the virtual USB console and completes the normal HA setup flow. The button, targets and controller run in independent processes. The test stops the Matter Server container, keeps the virtual Thread network alive and drives the same gestures in each phase.
+Two emulator processes exchange 802.15.4 frames. The runner provisions the unmodified Reflex firmware through its USB console, waits for routed IPv6 and commissions it with the button and targets. The installed HA integration renews the lease over Matter. When the pinned Matter Server requests the documented HTTP fallback for rule transfers, the runner provisions a fresh key over the virtual USB console and completes the normal HA setup flow. The button, targets and controller run in independent processes. The test stops the Matter Server container, keeps the virtual Thread network alive and drives both gestures and all five sensor changes in each phase.
 
-| Phase | Required sender at lamp and blind | Other evidence |
+| Phase | Required sender at every actuator | Other evidence |
 | --- | --- | --- |
 | Healthy HA | HA controller | Installed rules, standby lease, board subscriptions |
-| Matter Server stopped | Emulated Reflex node | Lease expired, board execution count increases by two |
+| Matter Server stopped | Emulated Reflex node | Lease expired, board execution count increases by seven |
 | Controller restarted | Original HA controller | New controller subscriptions, renewed lease, board count holds |
+
+| Input | Expected actuator command |
+| --- | --- |
+| Button double press | Lamp on |
+| Button long press | Blind tilt to 75% open (2500 on the wire) |
+| Door opens (Matter contact changes from true to false) | Plug on |
+| Occupancy detected | Dimmer to HA brightness 200 with a 0.2-second fade (Matter level 199, transition 2) |
+| Water leak detected | Plug off |
+| Temperature falls below 0 °C | Shade lift to 25% open (7500 on the wire) |
+| Humidity rises above 55% | Shade lift to 80% open (2000 on the wire) |
+
+The sensor test observes each command and the resulting actuator state before changing the next input. Further readings on the same side of a threshold must stay quiet. Returning the binary inputs to normal and the numeric inputs to the exact thresholds rearms the next phase.
 
 Each phase checks the exact command count, order, arguments and actuator states. A missing command, wrong sender or duplicate fails the job. The radios and SoC peripherals are emulated. This regression covers firmware and Matter behavior under controller loss. RF range, interference and physical board peripherals require separate testing.
 

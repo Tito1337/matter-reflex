@@ -4,6 +4,7 @@ import { rm } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { Environment, Logger, ServerNode } from "@matter/main";
 import { addButton, addTargets } from "./peers.mjs";
+import { addSensors, addSensorTargets } from "./sensor_peers.mjs";
 
 const socketPath = "/tmp/reflex-lab.sock";
 const mode = process.argv[2];
@@ -26,6 +27,9 @@ const node = await ServerNode.create({
 });
 const press = button && await addButton(node);
 const targets = !button && await addTargets(node);
+const extended = process.argv[3] === "sensors";
+const sensors = extended && button && await addSensors(node);
+const sensorTargets = extended && !button && await addSensorTargets(node);
 await node.start();
 await rm(socketPath, { force: true });
 let busy = false;
@@ -47,6 +51,9 @@ const server = createServer(async socket => {
             } else if (button && ["double", "long"].includes(command)) await press(command);
             else if (!button && command === "snapshot") result = targets.snapshot();
             else if (!button && command === "reset") await targets.reset();
+            else if (sensors && command.startsWith("sensor ")) await sensors(command.slice(7));
+            else if (sensorTargets && command === "sensor-snapshot") result = sensorTargets.snapshot();
+            else if (sensorTargets && command === "sensor-reset") await sensorTargets.reset();
             else throw new Error("Unknown fixture command");
             socket.end(JSON.stringify(result ?? { ok: true }) + "\n");
         } catch (error) {
