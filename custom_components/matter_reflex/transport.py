@@ -21,6 +21,10 @@ class ReflexError(Exception):
     """A protocol or safety condition prevents the operation."""
 
 
+class JournalUnsupported(ReflexError):
+    """The authenticated peer has no execution journal."""
+
+
 CHANNEL_ERRORS = (
     ReflexError,
     MatterClientException,
@@ -148,7 +152,18 @@ class Channel:
         await self.request(client, "rules", image)
 
     async def activity(self, client):
-        return json.loads(await self.request(client, "activity"))
+        authenticated_route = self.address
+        try:
+            return json.loads(await self.request(client, "activity"))
+        except ReflexError:
+            # Older boards have no /v1/activity route. Confirm their identity
+            # and protocol generation before silencing further journal reads.
+            self.address = authenticated_route
+            if "ready" not in await self.status(client):
+                raise JournalUnsupported(
+                    "Legacy ESP firmware has no activity journal"
+                ) from None
+            raise
 
     async def status(self, client):
         data = json.loads(await self.request(client, "status"))
@@ -229,7 +244,10 @@ class ESPHomeChannel:
         return status
 
     async def activity(self, client):
-        return await self.exchange()
+        status = await self.exchange()
+        if "journal" not in status:
+            raise JournalUnsupported("ESPHome board has no activity journal")
+        return status
 
     async def status(self, client):
         return await self.exchange()

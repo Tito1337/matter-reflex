@@ -4,6 +4,8 @@ The [board configuration](xiao-esp32c6.yaml) uses ESPHome 2026.11.0 and pins the
 
 For a board that already runs ESPHome, [add Reflex to your existing node](../docs/esphome-component.md). The board-independent package lets you choose the sensors, GPIOs and endpoints.
 
+For **direct reflexes**, build the local OTA profile from the same checkout as the integration. Choose the fresh-board or commissioned-board profile in [Thread OTA](#thread-ota). The Device Builder revision below supports fallback reflexes only.
+
 ## Install as an ESPHome package
 
 In your Device Builder configuration, import the board package at the revision below and set your own device name and secrets locally. This example is for a fresh board. For a commissioned standalone board follow the migration instructions below.

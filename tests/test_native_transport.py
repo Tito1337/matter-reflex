@@ -465,3 +465,21 @@ async def test_reconfigure_verifies_esphome_board_and_preserves_identity(monkeyp
             "esphome_entry_id": "bureau",
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_native_activity_distinguishes_unsupported_from_incomplete_reads():
+    client = Mock()
+    client.get_node.return_value.node_data.attributes = {}
+    client.read_attribute = AsyncMock(side_effect=InvalidArguments("Unknown attribute"))
+    with pytest.raises(native.JournalUnsupported):
+        await native.read_activity(client, 31)
+    client.read_attribute.side_effect = None
+    client.read_attribute.return_value = {native.PREFIX + "2": "a" * 64}
+    with pytest.raises(native.JournalUnsupported):
+        await native.read_activity(client, 31)
+    client.get_node.return_value.node_data.attributes[native.PREFIX + "65531"] = list(
+        range(10)
+    )
+    with pytest.raises(ReflexError, match="journal is unavailable"):
+        await native.read_activity(client, 31)

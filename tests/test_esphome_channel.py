@@ -8,7 +8,11 @@ import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
 
-from custom_components.matter_reflex.transport import ESPHomeChannel, ReflexError
+from custom_components.matter_reflex.transport import (
+    ESPHomeChannel,
+    JournalUnsupported,
+    ReflexError,
+)
 
 
 def channel():
@@ -79,3 +83,12 @@ async def test_api_requires_encryption_and_handles_disconnect():
     with pytest.raises(ReflexError):
         await api.send_rules(None, b"rules")
     services.async_call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_legacy_status_identifies_missing_journal():
+    api, _, _, reply = channel()
+    with pytest.raises(JournalUnsupported):
+        await api.activity(None)
+    reply["journal"] = ""
+    assert await api.activity(None) == reply

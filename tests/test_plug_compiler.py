@@ -1,5 +1,6 @@
 """Compile registry-backed Matter outlets independently of the names assigned in HA."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -266,6 +267,18 @@ async def test_direct_handoff_requires_accepted_image_and_source(monkeypatch, tm
     options = {"mode": "direct", "esp": "board-a"}
     policy = {"condition": "matter_reflex.mode", "options": options}
     supported = await compile_plug(monkeypatch, conditions=[policy], entry_id="board-a")
+    original = next(iter(supported.activity.values()))
+    extra = replace(
+        original,
+        row=replace(original.row, rule_id=1234, target=123),
+        target="switch.second",
+    )
+    edited_rules = {**supported.activity, extra.row.rule_id: extra}
+    edited = replace(
+        supported,
+        image=encode([item.row for item in edited_rules.values()]),
+        activity=edited_rules,
+    )
     rejected = await compile_plug(
         monkeypatch,
         entry_id="board-a",
@@ -279,7 +292,7 @@ async def test_direct_handoff_requires_accepted_image_and_source(monkeypatch, tm
     rt = Runtime.__new__(Runtime)
     entry = SimpleNamespace(
         entry_id="board-a",
-        data={"matter_entry_id": "fabric"},
+        data={"matter_entry_id": "fabric", "fabric": 2, "node_id": 99},
         domain="matter_reflex",
         state=ConfigEntryState.LOADED,
         runtime_data=rt,
@@ -287,6 +300,7 @@ async def test_direct_handoff_requires_accepted_image_and_source(monkeypatch, tm
     hass.config_entries = SimpleNamespace(async_get_entry=lambda _: entry)
     rt.hass, rt.entry, rt.node = hass, entry, 99
     rt.activity = Activity(rt)
+    rt.images = runtime_module.OwnershipImages(hass, entry)
     rt.direct_mask = 0
     rt.acl_synced = False
     rt.synced_permissions = None
@@ -295,18 +309,31 @@ async def test_direct_handoff_requires_accepted_image_and_source(monkeypatch, tm
     rt.issue = rt.clear_issue = Mock()
     actual = digest(encode([]))
 
+    capability = {}
+
     async def refresh(_):
-        rt.status = {"hash": actual}
+        rt.status = {"hash": actual, **capability}
         rt.monitor.ready_hash = actual
         return rt.status
 
-    rt.monitor = SimpleNamespace(refresh=refresh, wake=Mock(), ready_mask=0)
+    rt.monitor = SimpleNamespace(
+        refresh=refresh, wake=Mock(), ready_mask=0, mask_known=True
+    )
     rt.status = None
     rt.transfer = AsyncMock(side_effect=RuntimeError("image rejected"))
     monkeypatch.setattr(
         runtime_module,
         "async_compile",
-        AsyncMock(side_effect=[supported, supported, rejected]),
+        AsyncMock(
+            side_effect=[
+                supported,
+                supported,
+                supported,
+                RuntimeError("interview pending"),
+                edited,
+                rejected,
+            ]
+        ),
     )
     monkeypatch.setattr(runtime_module, "is_reflex", lambda _: True)
     monkeypatch.setattr(
@@ -319,6 +346,13 @@ async def test_direct_handoff_requires_accepted_image_and_source(monkeypatch, tm
         "trigger": {"entity_id": "event.tester"},
     }
     try:
+        with pytest.raises(
+            runtime_module.ReflexError, match="readable ESP source readiness"
+        ):
+            await rt.sync()
+        rt.transfer.assert_not_awaited()
+        assert checker.async_check(variables=variables)
+        capability["ready"] = 0
         with pytest.raises(RuntimeError, match="image rejected"):
             await rt.sync()
         assert checker.async_check(variables=variables)
@@ -332,6 +366,22 @@ async def test_direct_handoff_requires_accepted_image_and_source(monkeypatch, tm
         assert checker.async_check(variables=variables)
         rt.monitor.ready_mask = 1
         assert not checker.async_check(variables=variables)
+
+        # Restart with an unrelated unfinished interview. Status alone resolves
+        # the committed image, including a commit whose reply was lost.
+        rt.activity = Activity(rt)
+        rt.images = runtime_module.OwnershipImages(hass, entry)
+        await rt.images.load()
+        with pytest.raises(RuntimeError, match="interview pending"):
+            await rt.sync()
+        rt.observe_image(actual)
+        assert not checker.async_check(variables=variables)
+        rt.acl_synced = False
+        rt.acls.reconcile.side_effect = RuntimeError("ACL unavailable")
+        with pytest.raises(RuntimeError, match="ACL unavailable"):
+            await rt.sync()
+        assert not checker.async_check(variables=variables)
+        rt.acls.reconcile.side_effect = None
         await rt.sync()
         assert checker.async_check(variables=variables)
     finally:

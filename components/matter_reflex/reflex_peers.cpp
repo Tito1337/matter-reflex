@@ -31,11 +31,15 @@ void (*subscription_listener)(uint64_t);
 const reflex::Rules *rule_set;
 unsigned required_peers;
 reflex::SensorState sensor_states[reflex::kMaxRules];
+bool button_path_ready[reflex::kMaxRules];
 reflex::State states[reflex::kMaxRules];
 
 void forget_states(NodeId node) {
     for (size_t i = 0; i < rule_set->count; ++i) {
-        if (rule_set->rows[i].source == node) sensor_states[i] = {};
+        if (rule_set->rows[i].source == node) {
+            sensor_states[i] = {};
+            button_path_ready[i] = false;
+        }
         if (rule_set->rows[i].target == node) states[i] = {-1, -1};
     }
 }
@@ -72,6 +76,7 @@ int32_t measurement(ClusterId cluster, TLV::TLVReader *reader, const StatusIB &s
 class Peer : public ReadClient::Callback {
 public:
     NodeId node = 0;
+    bool direct_buttons = false;
     bool buttons = false, lamp = false, level = false, cover = false, established = false, connecting = false;
     std::array<bool, 4> sensors{};
     static constexpr std::array<ClusterId, 4> sensor_clusters{0x45, 0x406, 0x402, 0x405};
@@ -82,7 +87,7 @@ public:
         reader.reset();
         session.Release();
         node = 0;
-        buttons = lamp = level = cover = established = connecting = false;
+        direct_buttons = buttons = lamp = level = cover = established = connecting = false;
         sensors.fill(false);
         high_water.ClearValue();
         cached_address.ClearValue();
@@ -107,6 +112,17 @@ public:
     }
     void OnAttributeData(const ConcreteDataAttributePath &p, TLV::TLVReader *r, const StatusIB &s) override {
         if (p.mAttributeId != 0) return;
+        if (p.mClusterId == 0x3b) {
+            uint8_t positions;
+            const bool valid = r && s.ToChipError() == CHIP_NO_ERROR &&
+                               r->Get(positions) == CHIP_NO_ERROR && positions >= 2;
+            for (size_t i = 0; i < rule_set->count; ++i) {
+                const auto &rule = rule_set->rows[i];
+                if (rule.source == node && rule.source_ep == p.mEndpointId)
+                    button_path_ready[i] = valid;
+            }
+            return;
+        }
         if (p.mClusterId != 6 && p.mClusterId != 8) {
             const auto value = measurement(p.mClusterId, r, s);
             const auto handling = reflex_runtime::handling();
@@ -173,10 +189,12 @@ private:
                                                     ReadClient::InteractionType::Subscribe));
         if (!p.reader || !p.session.Grab(handle)) { p.disconnect(); return; }
         EventPathParams events(kInvalidEndpointId, 0x3b, kInvalidEventId, true /* urgent */);
-        AttributePathParams attrs[3 + sensor_clusters.size()];
+        AttributePathParams attrs[4 + sensor_clusters.size()];
         size_t attr_count = 0;
         for (size_t i = 0; i < p.sensors.size(); ++i)
             if (p.sensors[i]) attrs[attr_count++] = AttributePathParams(kInvalidEndpointId, sensor_clusters[i], 0);
+        // NumberOfPositions is mandatory and stable on each Switch endpoint.
+        if (p.direct_buttons) attrs[attr_count++] = AttributePathParams(kInvalidEndpointId, 0x3b, 0);
         if (p.lamp) attrs[attr_count++] = AttributePathParams(kInvalidEndpointId, 6, 0);
         if (p.level) {
             attrs[attr_count++] = AttributePathParams(kInvalidEndpointId, 8, 0);
@@ -335,7 +353,8 @@ void Peer::OnEventData(const EventHeader &h, TLV::TLVReader *r, const StatusIB *
     if (handling == reflex_runtime::Handling::unavailable) return;
     const uint64_t run = reflex_runtime::next_run();
     for (size_t i = 0; i < rule_set->count; ++i) {
-        if (rule_set->rows[i].handles(handling == reflex_runtime::Handling::all) &&
+        if ((handling == reflex_runtime::Handling::all || button_path_ready[i]) &&
+            rule_set->rows[i].handles(handling == reflex_runtime::Handling::all) &&
             reflex::matches(rule_set->rows[i], node, h.mPath.mEndpointId, h.mPath.mEventId, presses))
             dispatch(i, h.mEventNumber, run);
     }
@@ -362,6 +381,7 @@ void configure(FabricIndex index, const reflex::Rules &rules) {
     for (size_t i = 0; i < rules.count; ++i) {
         states[i] = {-1, -1};
         sensor_states[i] = {};
+        button_path_ready[i] = false;
     }
 }
 uint32_t direct_ready_mask() {
@@ -371,7 +391,8 @@ uint32_t direct_ready_mask() {
         const auto &rule = rule_set->rows[i];
         if (!rule.direct) continue;
         const auto *source = find(rule.source);
-        if (source && source->established)
+        const bool path_ready = reflex::sensor_cluster(rule.event) ? sensor_states[i].previous != -1 : button_path_ready[i];
+        if (source && source->established && path_ready)
             mask |= uint32_t(1) << i;
     }
     return mask;
@@ -390,8 +411,10 @@ void tick() {
         const auto &rule = rule_set->rows[i];
         if (auto *p = ensure(rule.source)) {
             auto cluster = reflex::sensor_cluster(rule.event);
-            if (!cluster) p->buttons = true;
-            else for (size_t j = 0; j < p->sensors.size(); ++j)
+            if (!cluster) {
+                p->buttons = true;
+                p->direct_buttons |= rule.direct;
+            } else for (size_t j = 0; j < p->sensors.size(); ++j)
                 if (p->sensor_clusters[j] == cluster) p->sensors[j] = true;
         }
         if (auto *p = ensure(rule_set->rows[i].target)) {

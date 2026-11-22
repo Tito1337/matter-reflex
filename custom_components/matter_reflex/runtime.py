@@ -18,9 +18,9 @@ from homeassistant.helpers.storage import Store
 from . import native
 from .acl import AclManager
 from .activity import Activity
-from .compiler import async_compile
+from .compiler import async_compile, direct_mask
 from .const import DOMAIN, HEARTBEAT_SECONDS
-from .ownership import lease_for
+from .ownership import OwnershipImages, lease_for
 from .status import RETRY_INTERVAL, StatusMonitor
 from .transport import (
     CHANNEL_ERRORS,
@@ -30,9 +30,10 @@ from .transport import (
     client_for,
     is_reflex,
 )
-from .wire import digest
+from .wire import digest, encode
 
 _LOGGER = logging.getLogger(__name__)
+EMPTY_IMAGE_HASH = digest(encode([]))
 
 
 class Runtime:
@@ -71,7 +72,7 @@ class Runtime:
         self.monitor = StatusMonitor(self)
         self.activity = Activity(self)
         self.lease = lease_for(hass, entry.entry_id)
-        self.desired_rules = {}
+        self.images = OwnershipImages(hass, entry)
         self.direct_mask = 0
         self.target_hash = None
         self.last_sync = None
@@ -85,27 +86,37 @@ class Runtime:
             return None
         return self.acl_synced and self.status["hash"] == self.target_hash
 
-    def esp_handles(self, entity_id, source):
-        installed = self.activity.image_hash
-        if installed is None or installed != self.monitor.ready_hash:
+    def esp_handles(self, entity_id, trigger):
+        installed = self.monitor.ready_hash
+        if installed in ("", EMPTY_IMAGE_HASH):
             return False
-        # Compare each requested row with the last accepted image. An unrelated
-        # failed transfer must not bring HA back into a working direct reflex.
-        desired = {
-            key: row
-            for key, row in self.desired_rules.items()
-            if row.direct
-            and row.entity_id == entity_id
-            and (source is None or source == row.source_entity)
-        }
-        ready = {
-            key: self.activity.rules[key]
-            for bit, key in enumerate(sorted(self.activity.rules))
-            if self.monitor.ready_mask & (1 << bit)
-        }
-        return bool(desired) and all(
-            ready.get(key) == row for key, row in desired.items()
-        )
+        if (
+            installed is not None
+            and self.monitor.mask_known
+            and self.monitor.ready_mask == 0
+        ):
+            return False
+        if installed is None or self.activity.image_hash != installed:
+            return None
+        for bit, key in enumerate(sorted(self.activity.rules)):
+            rule = self.activity.rules[key]
+            if (
+                rule.direct
+                and rule.entity_id == entity_id
+                and rule.matches_trigger(trigger)
+            ):
+                if self.monitor.ready_mask & (1 << bit):
+                    return True
+                if not self.monitor.mask_known:
+                    return None
+        return False
+
+    def observe_image(self, installed):
+        rules = self.images.maps.get(installed)
+        if rules is not None:
+            self.activity.configure(installed, rules)
+        elif self.activity.image_hash != installed:
+            self.activity.configure(None, {})
 
     def client(self):
         return client_for(
@@ -116,6 +127,14 @@ class Runtime:
         async_dispatcher_send(self.hass, self.signal)
 
     async def start(self):
+        if self.hass.state is CoreState.running:
+            self.lease.start()
+        await self.images.load()
+        for rules in self.images.maps.values():
+            self.direct_mask |= direct_mask(rules)
+        proof = self.images.last_ready
+        if proof and proof["hash"] in self.images.maps:
+            self.monitor.restored_ready = (proof["hash"], proof["ready"])
         await self.acls.load()
         for event in (
             EVENT_AUTOMATION_RELOADED,
@@ -320,14 +339,10 @@ class Runtime:
             self.node,
             self.entry.entry_id,
         )
-        self.desired_rules = compiled.activity
-        direct_mask = sum(
-            1 << bit
-            for bit, key in enumerate(sorted(compiled.activity))
-            if compiled.activity[key].direct
-        )
-        if self.direct_mask != direct_mask:
-            self.direct_mask = direct_mask
+        desired_mask = direct_mask(compiled.activity)
+        watched_mask = desired_mask | direct_mask(self.activity.rules)
+        if self.direct_mask != watched_mask:
+            self.direct_mask = watched_mask
             self.monitor.wake.set()
         current = set()
         for rule, reason in compiled.issues.items():
@@ -351,13 +366,22 @@ class Runtime:
         observed = self.status
         if not previously_verified or observed is None or observed["hash"] != expected:
             observed = await self.monitor.refresh(client)
+        await self.images.prepare(expected, compiled.activity, observed["hash"])
+        self.observe_image(self.monitor.ready_hash)
+        if (
+            desired_mask
+            and "ready" not in observed
+            and (observed["hash"] != expected or not self.monitor.mask_known)
+        ):
+            raise ReflexError(
+                "Direct reflexes require a readable ESP source readiness mask. Check the ESP firmware and rules transport."
+            )
         if (
             previously_verified
             and observed["hash"] == expected
             and self.last_sync
             and (datetime.now(UTC) - self.last_sync).total_seconds() < 3600
         ):
-            self.activity.configure(expected, compiled.activity)
             return
         await self.acls.reconcile(client, compiled.permissions, prune=False)
         if observed["hash"] != self.target_hash:
@@ -366,6 +390,7 @@ class Runtime:
         if observed["hash"] != self.target_hash:
             raise ReflexError("Device did not commit the expected rule hash")
         self.activity.configure(expected, compiled.activity)
+        self.direct_mask = desired_mask
         # Only remove obsolete permissions once the device confirms the rules.
         await self.acls.reconcile(client, compiled.permissions, prune=True)
         self.last_sync = datetime.now(UTC)

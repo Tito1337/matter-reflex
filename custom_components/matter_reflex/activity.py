@@ -7,9 +7,9 @@ from collections import deque
 from homeassistant.components.logbook.helpers import async_log_entry
 from homeassistant.helpers.storage import Store
 
+from . import native
 from .const import DOMAIN
-from .native import PREFIX
-from .transport import CHANNEL_ERRORS, ReflexError
+from .transport import CHANNEL_ERRORS, JournalUnsupported, ReflexError
 
 RESULTS = {
     0: "accepted",
@@ -46,22 +46,20 @@ class Activity:
 
     async def read(self):
         rt = self.runtime
-        if rt.channel is not None:
+        if rt.channel is None:
+            return await native.read_activity(rt.client(), rt.node)
+        try:
+            return await rt.channel.activity(rt.monitor.client)
+        except JournalUnsupported:
+            raise
+        except CHANNEL_ERRORS as channel_error:
+            if not rt.native_status_readable:
+                raise
             try:
-                return await rt.channel.activity(rt.monitor.client)
-            except CHANNEL_ERRORS:
-                if not rt.native_status_readable:
-                    raise
-        paths = [PREFIX + str(i) for i in range(5, 9)]
-        data = await rt.client().read_attribute(rt.node, [PREFIX + "2", *paths])
-        if not isinstance(data, dict) or not all(
-            isinstance(data.get(p), str) for p in paths
-        ):
-            raise ReflexError("ESP activity journal is unavailable")
-        return {
-            "hash": data.get(PREFIX + "2"),
-            "journal": "".join(data[p] for p in paths),
-        }
+                return await native.read_activity(rt.client(), rt.node)
+            except JournalUnsupported:
+                # The configured management channel may recover independently.
+                raise channel_error from None
 
     def record(self, snapshot):
         if not isinstance(snapshot, dict) or "hash" not in snapshot:
@@ -116,6 +114,7 @@ class Activity:
     async def run(self):
         if not self.seen:
             self.seen.extend(await self.store.async_load() or [])
+        unsupported = None
         while True:
             self.wake.clear()
             retry = False
@@ -126,7 +125,11 @@ class Activity:
             read_journal = self.rules and (
                 direct or status is None or status["executions"]
             )
-            if read_journal:
+            identity = (
+                self.runtime.monitor.generation,
+                self.runtime.monitor.software_version,
+            )
+            if read_journal and identity != unsupported:
                 try:
                     image = self.image_hash
                     generation = self.runtime.monitor.generation
@@ -137,12 +140,18 @@ class Activity:
                         and generation == self.runtime.monitor.generation
                     ):
                         self.record(snapshot)
+                except JournalUnsupported:
+                    unsupported = identity
                 except CHANNEL_ERRORS:
                     retry = True
             try:
                 # Servers without vendor attribute reports still expose the journal
                 # through the same authenticated management path as the rules.
-                poll = retry or (direct and not self.runtime.monitor.confirmed)
+                poll = retry or (
+                    direct
+                    and identity != unsupported
+                    and not self.runtime.monitor.confirmed
+                )
                 async with asyncio.timeout(30 if poll else None):
                     await self.wake.wait()
             except TimeoutError:

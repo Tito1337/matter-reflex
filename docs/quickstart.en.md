@@ -9,7 +9,7 @@ Keep Matter sensors and buttons working when Home Assistant or its Matter Server
 
 ## First automation
 
-1. Build, provision and commission the board using the [ESPHome XIAO installation guide](../examples/README.md).
+1. Build the ESP firmware from the same checkout as the HA integration. For a fresh XIAO use [xiao-esp32c6-ota.yaml](../examples/xiao-esp32c6-ota.yaml). For a commissioned board with the standalone partition layout use [xiao-esp32c6-existing-ota.yaml](../examples/xiao-esp32c6-existing-ota.yaml) and its backup and migration steps. Follow the [Thread OTA installation guide](../examples/README.md#thread-ota).
 2. Copy [the integration](../custom_components/matter_reflex) to `config/custom_components/matter_reflex`, check the HA configuration and restart Core. Under **Settings → Devices & services**, add **Matter Reflex** and select the board.
 3. Use the [MYGGBETT door or MYGGSPRAY motion example](../README.md#your-first-automation) with your own binary sensor and light entity IDs. Apply the **reflex** label to the enabled automation.
 4. For ESP-first operation, add the **Reflex mode** condition to the automation, choose the ESP and **Direct reflex**, and save. Check the automation’s Activity for reported ESP runs. [Modes and advanced handlers](../README.md#direct-and-fallback-reflexes)

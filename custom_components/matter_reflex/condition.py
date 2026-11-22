@@ -70,9 +70,10 @@ class ReflexMode(Condition):
             return False
         runtime = getattr(entry, "runtime_data", None)
         trigger = (variables or {}).get("trigger") or {}
-        return bool(
-            runtime and not runtime.esp_handles(entity_id, trigger.get("entity_id"))
-        )
+        owner = runtime.esp_handles(entity_id, trigger) if runtime else None
+        if owner is None:
+            return not self.lease.starting()
+        return not owner
 
 
 class AdvancedHandlers(ReflexMode):

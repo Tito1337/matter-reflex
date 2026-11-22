@@ -288,7 +288,8 @@ async def test_permission_change_reconciles_with_same_rule_image(monkeypatch):
     runtime.client = Mock(return_value=client)
     runtime.acls = SimpleNamespace(reconcile=AsyncMock())
     runtime.transfer = AsyncMock()
-    runtime.activity = Mock()
+    runtime.activity = Mock(rules={})
+    runtime.images = SimpleNamespace(prepare=AsyncMock(), maps={})
     runtime.direct_mask = 0
     runtime.clear_issue = Mock()
     runtime.acl_synced = False
@@ -301,7 +302,9 @@ async def test_permission_change_reconciles_with_same_rule_image(monkeypatch):
         runtime.status = {"hash": digest(image)}
         return runtime.status
 
-    runtime.monitor = SimpleNamespace(refresh=AsyncMock(side_effect=observed))
+    runtime.monitor = SimpleNamespace(
+        refresh=AsyncMock(side_effect=observed), ready_hash=None
+    )
     before = {15: {(1, 6, 3)}}
     after = {15: {(1, 6, 3), (1, 8, 3)}}
     monkeypatch.setattr(integration, "is_reflex", lambda _: True)

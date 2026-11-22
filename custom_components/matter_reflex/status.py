@@ -27,7 +27,11 @@ class StatusMonitor:
         self.last_ready_report = (0, None)
         self.ready_hash = None
         self.ready_mask = 0
+        self.mask_known = False
+        self.restored_ready = None
+        self.inflight_mask = 0xFFFFFFFF
         self.bound_node = None
+        self.software_version = None
         self.removed = False
         self.reported_fields = set()
         self.check_expiration = False
@@ -75,6 +79,14 @@ class StatusMonitor:
             node = client.get_node(self.runtime.node) if client else None
         except CHANNEL_ERRORS:
             node = None
+        version = (
+            node.node_data.attributes.get(native.SOFTWARE_VERSION_PATH)
+            if node
+            else None
+        )
+        if version != self.software_version:
+            self.software_version = version
+            self.runtime.activity.wake.set()
         if self.client is client and self.bound_node is node:
             return
         self.detach()
@@ -122,6 +134,7 @@ class StatusMonitor:
         self.reported_fields.clear()
         self.ready_reported = False
         self.runtime.acl_synced = False
+        self.runtime.activity.wake.set()
         self.publish(None)
         self.wake.set()
         if online:
@@ -144,8 +157,21 @@ class StatusMonitor:
         if status is not None:
             # Keep the last verified ownership through a transient disconnect.
             # The reciprocal lease independently bounds how long HA will yield.
-            self.ready_hash = status["hash"]
-            self.ready_mask = status.get("ready", 0)
+            if self.ready_hash != status["hash"]:
+                self.ready_hash = status["hash"]
+                self.ready_mask = 0
+                self.mask_known = False
+                if self.restored_ready is not None:
+                    saved_hash, mask = self.restored_ready
+                    if saved_hash == self.ready_hash:
+                        self.ready_mask, self.mask_known = mask, True
+                    self.restored_ready = None
+            if "ready" in status:
+                self.ready_mask = status["ready"]
+                self.mask_known = True
+            rt.observe_image(self.ready_hash)
+            if self.mask_known and rt.direct_mask:
+                rt.images.remember_ready(self.ready_hash, self.ready_mask)
         if status != rt.status:
             if (
                 status is None
@@ -165,17 +191,29 @@ class StatusMonitor:
     @callback
     def readiness(self, event, value):
         # Re-read the mask with its image hash over the configured channel.
-        if not self.online or type(value) is not int:
+        if not self.online or type(value) is not int or not 0 <= value <= 0xFFFFFFFF:
             return
         self.last_ready_report = (self.last_ready_report[0] + 1, value)
         if not self.lock.locked():
             self.ready_reported = True
         status = self.runtime.status
+        self.ready_mask &= value
+        if self.restored_ready is not None:
+            saved_hash, mask = self.restored_ready
+            self.restored_ready = (saved_hash, mask & value)
+        if value == 0 and self.ready_hash is not None:
+            self.mask_known = True
+        if self.mask_known and self.runtime.direct_mask:
+            self.runtime.images.remember_ready(self.ready_hash, self.ready_mask)
+        self.inflight_mask &= value
+        changed = status is not None and value != status.get("ready")
         if (
-            self.runtime.direct_mask
-            and status is not None
-            and value != status.get("ready")
+            status is not None
+            and "ready" in status
+            and status["ready"] != self.ready_mask
         ):
+            self.publish({**status, "ready": self.ready_mask})
+        if self.runtime.direct_mask and (changed or status is None):
             self.wake.set()
 
     @callback
@@ -212,6 +250,7 @@ class StatusMonitor:
             if client is not None and client is not self.client:
                 raise ReflexError("Matter client changed before status refresh")
             previously_confirmed = self.confirmed
+            self.inflight_mask = 0xFFFFFFFF
             ready_sequence = self.last_ready_report[0]
             generation, sequence = self.generation, self.sequence
             async with asyncio.timeout(10):
@@ -232,7 +271,10 @@ class StatusMonitor:
             if latest["hash"] != read_hash or (
                 ready_sequence != sequence_now
                 and "ready" in latest
-                and latest["ready"] != reported_ready
+                and (
+                    latest["ready"] != reported_ready
+                    or latest["ready"] & ~self.inflight_mask
+                )
             ):
                 latest.pop("ready", None)
                 self.wake.set()
@@ -258,7 +300,6 @@ class StatusMonitor:
             or self.ready_reported
             or not rt.direct_mask
             or rt.status is None
-            or rt.status["hash"] != rt.target_hash
         ):
             return None
         return 4 if self.ready_mask != rt.direct_mask else 30

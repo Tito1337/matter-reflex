@@ -62,6 +62,8 @@ def setup(channel=None):
         ),
         target_hash="a" * 64,
         direct_mask=0,
+        observe_image=Mock(),
+        images=Mock(),
         status=None,
         acl_synced=True,
         client=Mock(return_value=client),
@@ -290,3 +292,47 @@ async def test_stale_read_cannot_restore_ready_bits_after_source_disconnect():
     await monitor.refresh(client)
     assert monitor.ready_mask == 0
     assert monitor.wake.is_set()
+
+
+@pytest.mark.asyncio
+async def test_missing_mask_and_failed_read_after_source_loss():
+    monitor, rt, client, _ = setup()
+    rt.direct_mask = 3
+    rt.read_status.return_value = {**snapshot(), "ready": 3}
+    await monitor.refresh(client)
+    rt.read_status.return_value = snapshot()
+    await monitor.refresh(client)
+    assert monitor.mask_known and monitor.ready_mask == 3
+    report(client, 9, 1)
+    assert monitor.ready_mask == 1
+    rt.read_status.side_effect = TimeoutError
+    with pytest.raises(TimeoutError):
+        await monitor.refresh(client)
+    report(client, 4, 2)
+    assert monitor.ready_mask == 1
+    report(client, 9, 3)
+    assert monitor.ready_mask == 1  # A positive report still needs its image hash.
+
+
+@pytest.mark.asyncio
+async def test_legacy_native_server_rejects_optional_field_but_exposes_installed_image():
+    baseline = {path: snapshot()[key] for path, key in native.STATUS_PATHS.items()}
+    client = SimpleNamespace(
+        read_attribute=AsyncMock(side_effect=[ReflexError("unknown path"), baseline])
+    )
+    status = await native.read_status(client, 31, include_ready=True)
+    assert status["hash"] == snapshot()["hash"] and "ready" not in status
+    assert client.read_attribute.await_args.args[1] == list(native.STATUS_PATHS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_image,expected", [(True, 1), (False, 0)])
+async def test_restored_mask_requires_matching_live_hash(same_image, expected):
+    monitor, rt, client, _ = setup()
+    rt.direct_mask = 3
+    monitor.restored_ready = (rt.target_hash if same_image else "b" * 64, 3)
+    report(client, 9, 1)
+    assert monitor.ready_hash is None and monitor.ready_mask == 0
+    await monitor.refresh(client)
+    assert monitor.ready_mask == expected
+    assert monitor.mask_known is same_image

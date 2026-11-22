@@ -6,7 +6,7 @@ from chip.clusters import Objects as clusters
 from matter_server.common.errors import InvalidArguments, InvalidCommand, MatterError
 
 from .const import CLUSTER, ENDPOINT, LEASE_SECONDS, VENDOR
-from .transport import ReflexError
+from .transport import CHANNEL_ERRORS, JournalUnsupported, ReflexError
 from .wire import digest
 
 LEASE_ACTION_ID = 1
@@ -97,7 +97,13 @@ async def read_status(client, node_id, *, include_ready=False):
     paths = list(STATUS_PATHS)
     if include_ready:
         paths.append(READY_PATH)
-    data = await client.read_attribute(node_id, paths)
+    try:
+        data = await client.read_attribute(node_id, paths)
+    except CHANNEL_ERRORS:
+        if not include_ready:
+            raise
+        # Some servers reject the whole batch when one vendor field is unknown.
+        data = await client.read_attribute(node_id, list(STATUS_PATHS))
     if not isinstance(data, dict):
         raise ReflexError("Matter Server returned an invalid status snapshot")
     status = {"node_id": f"{node_id:016x}"}
@@ -105,10 +111,38 @@ async def read_status(client, node_id, *, include_ready=False):
         value = data.get(path)
         validate_status_value(key, value)
         status[key] = value
-    if include_ready and data.get(READY_PATH) is not None:
-        validate_status_value("ready", data[READY_PATH])
-        status["ready"] = data[READY_PATH]
+    ready = data.get(READY_PATH)
+    if include_ready and type(ready) is int and 0 <= ready <= 0xFFFFFFFF:
+        status["ready"] = ready
     return status
+
+
+async def read_activity(client, node_id):
+    paths = [PREFIX + str(i) for i in range(5, 9)]
+    attrs = client.get_node(node_id).node_data.attributes.get(PREFIX + "65531")
+    if isinstance(attrs, list) and not set(range(5, 9)).issubset(attrs):
+        raise JournalUnsupported("ESP does not advertise journal attributes")
+    try:
+        data = await client.read_attribute(node_id, [PREFIX + "2", *paths])
+    except MatterError as err:
+        if isinstance(err, (InvalidArguments, InvalidCommand)) or getattr(
+            err, "status", None
+        ) in (0x86, 0xC3):
+            raise JournalUnsupported(
+                "Matter Server rejected the ESP journal attributes"
+            ) from err
+        raise
+    if not isinstance(data, dict) or not isinstance(data.get(PREFIX + "2"), str):
+        raise ReflexError("Invalid Matter journal snapshot")
+    parts = [data.get(path) for path in paths]
+    if attrs is None and all(
+        part is None or isinstance(part, dict) and part.get("Status") in (0x86, 0xC3)
+        for part in parts
+    ):
+        raise JournalUnsupported("Matter Server exposes no ESP journal attributes")
+    if not all(isinstance(part, str) for part in parts):
+        raise ReflexError("ESP activity journal is unavailable")
+    return {"hash": data[PREFIX + "2"], "journal": "".join(parts)}
 
 
 async def write_frame(client, node_id, frame):

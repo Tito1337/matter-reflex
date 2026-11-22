@@ -75,6 +75,52 @@ class ActivityRule:
     row: Rule
     target: str
     source_entity: str
+    sensor_kind: str = ""
+
+    def matches_trigger(self, trigger):
+        if trigger.get("entity_id") != self.source_entity:
+            return False
+        state = trigger.get("to_state")
+        if state is None:
+            return (
+                True  # Some manual and legacy trigger contexts only carry the entity.
+            )
+        event = self.row.event
+        if event <= 6:
+            name = state.attributes.get("event_type")
+            if event == 6:
+                return name == f"multi_press_{self.row.presses}"
+            return EVENTS.get(name) == event
+        if event <= OCCUPIED:
+            active = event in (BOOLEAN_TRUE, OCCUPIED)
+            if self.sensor_kind == "contact":
+                active = not active
+            return state.state == ("on" if active else "off")
+        # Compare the actual readings. One change can cross both an old
+        # installed threshold and a different threshold in the current HA editor.
+        above = event in (TEMP_ABOVE, HUMIDITY_ABOVE)
+
+        def inside(sample):
+            if sample is None:
+                raise ValueError
+            unit = sample.attributes.get("unit_of_measurement")
+            quantity = Fraction(str(sample.state))
+            if self.sensor_kind == "temperature":
+                if unit == "°F":
+                    quantity = (quantity - 32) * 5 / 9
+                elif unit == "K":
+                    quantity -= Fraction("273.15")
+                elif unit != "°C":
+                    raise ValueError
+            elif unit != "%":
+                raise ValueError
+            scaled = quantity * 100
+            return scaled > self.row.threshold if above else scaled < self.row.threshold
+
+        try:
+            return inside(state) and not inside(trigger.get("from_state"))
+        except (ValueError, ZeroDivisionError):
+            return False
 
     @property
     def trigger(self):
@@ -84,6 +130,10 @@ class ActivityRule:
     @property
     def direct(self):
         return self.row.direct
+
+
+def direct_mask(rules):
+    return sum(1 << bit for bit, key in enumerate(sorted(rules)) if rules[key].direct)
 
 
 @dataclass
@@ -414,6 +464,7 @@ async def async_compile(
         raise RuntimeError(f"Waiting for the Matter commands of {entity_id}")
 
     source_names = {}
+    source_kinds = {}
     target_names = {}
 
     def power_operations(endpoint, entity_id):
@@ -477,6 +528,7 @@ async def async_compile(
                 raise RuntimeError(
                     f"Waiting for the Matter sensor attribute of {entity_id}"
                 )
+            source_kinds[entity_id] = kind
             return Endpoint(
                 node.node_id,
                 ep.endpoint_id,
@@ -620,13 +672,15 @@ async def async_compile(
             continue
         rules.extend(added)
         for row in added:
+            source = source_names[
+                (row.source, row.source_ep, SOURCE_CLUSTERS.get(row.event, 59))
+            ]
             activity[row.rule_id] = ActivityRule(
                 entity_id,
                 row,
                 target_names[(row.target, row.target_ep)],
-                source_names[
-                    (row.source, row.source_ep, SOURCE_CLUSTERS.get(row.event, 59))
-                ],
+                source,
+                source_kinds.get(source, ""),
             )
             permissions.setdefault(row.source, set()).add(
                 (row.source_ep, SOURCE_CLUSTERS.get(row.event, 59), 1)
