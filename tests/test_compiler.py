@@ -269,6 +269,10 @@ async def test_cover_compile_checks_real_registry_and_acl(
         ("close_cover", 2, 1, 7),
         ("stop_cover", 8, 2, 8),
         ("set_cover_position", 4, 5, 9),
+        ("set_cover_tilt_position", 128, 8, 10),
+        ("open_cover_tilt", 16, 0, 11),
+        ("close_cover_tilt", 32, 1, 12),
+        ("stop_cover_tilt", 64, 2, 13),
     ],
 )
 def test_single_cover_feature_and_accepted_command(name, flag, command, operation):

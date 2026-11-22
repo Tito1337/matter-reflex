@@ -25,3 +25,5 @@ jobs:
           ./dev ha python - < tests/contract/encode.py | tools/test-engine
       - name: Verify the encrypted lease request on a simulated Matter network
         run: ./dev test-lease
+      - name: Exercise subscribed sensors and actuators on a simulated Matter network
+        run: ./dev test-sensors

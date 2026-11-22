@@ -9,7 +9,8 @@ from custom_components.matter_reflex.compiler import Endpoint, compile_automatio
 from custom_components.matter_reflex.wire import encode
 
 readme = Path("README.md").read_text(encoding="utf-8")
-example = yaml.safe_load(readme.split("```yaml\n", 1)[1].split("```", 1)[0])
+button_example = readme.split("### Button example", 1)[1]
+example = yaml.safe_load(button_example.split("```yaml\n", 1)[1].split("```", 1)[0])
 endpoints = {
     "event.reading_button": Endpoint(0x123456789ABCDEF0, 2, event_types=("multi_press_2",)),
     "light.reading_lamp": Endpoint(40, 1, dimmable=True),

@@ -64,6 +64,22 @@ case "$mode" in
         fi
         exec "${podman_cmd[@]}" "${run[@]}" --device "$device" --env "ESPPORT=$device" --env "ESPTOOL_PORT=$device" "$idf_image" bash -c 'cd /work && exec "$@"' bash "$@"
         ;;
+    test-sensors)
+        scratch=$(mktemp -d)
+        trap 'rm -rf -- "$scratch"' EXIT
+        "$project/dev" ha python - < "$project/tests/contract/sensor-image.py" > "$scratch/image"
+        sources=( -std=c++17 -static -Icomponents/matter_reflex components/matter_reflex/reflex_engine.cpp tests/contract/sensor-driver.cpp )
+        if command -v g++ >/dev/null; then
+            (cd "$project" && g++ "${sources[@]}" -o "$scratch/engine")
+        else
+            "${podman_cmd[@]}" "${run[@]}" --network none --volume "$scratch:/fixture:Z" "$idf_image" \
+                g++ "${sources[@]}" -o /fixture/engine
+        fi
+        chmod a+rx "$scratch" "$scratch/engine"
+        chmod a+r "$scratch/image"
+        "${podman_cmd[@]}" run --rm -i --network none --volume "$scratch:/fixture:ro,Z" --entrypoint node \
+            "$controller_image" --input-type=module < "$project/tests/contract/sensor-outage.mjs"
+        ;;
     test-lease)
         exec "${podman_cmd[@]}" run --rm -i --network none --entrypoint node "$controller_image" \
             --input-type=module < "$project/tests/contract/lease-exchange.mjs"
@@ -72,7 +88,7 @@ case "$mode" in
         exec "${podman_cmd[@]}" "${run[@]}" --network none --entrypoint "" "$ha_image" "$@"
         ;;
     *)
-        echo "Usage: ./dev {esphome|matter|matter-usb|factory|idf|usb|ha|test-lease} command [arguments...]" >&2
+        echo "Usage: ./dev {esphome|matter|matter-usb|factory|idf|usb|ha|test-lease|test-sensors} command [arguments...]" >&2
         exit 2
         ;;
 esac

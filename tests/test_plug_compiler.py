@@ -26,6 +26,7 @@ async def compile_plug(
     platform="matter",
     disabled_by=None,
     category=None,
+    original_class=None,
     reflex_node=99,
     product="GRILLPLATS",
     vendor=4476,
@@ -71,6 +72,7 @@ async def compile_plug(
     switch = registered("switch", "anything", f"ref-1-{uid}")
     switch.platform, switch.disabled_by = platform, disabled_by
     switch.entity_category = category
+    switch.original_device_class = original_class
     automation = registered("automation", "socket", "slot")
     regs = {e.entity_id: e for e in (switch, trigger, automation)}
     cfg = {
@@ -177,3 +179,12 @@ async def test_unrelated_outlet_with_incomplete_basic_information(monkeypatch):
 async def test_missing_command_report_does_not_compile_an_empty_image(monkeypatch):
     with pytest.raises(RuntimeError, match="Waiting for the Matter commands"):
         await compile_plug(monkeypatch, commands=None)
+
+
+@pytest.mark.asyncio
+async def test_generic_matter_outlet(monkeypatch):
+    result = await compile_plug(
+        monkeypatch, types=(0x0013,), uid="MatterSwitch-6-0", original_class="outlet"
+    )
+    assert result.permissions[42] == {(1, 6, 3)}
+    assert not result.issues

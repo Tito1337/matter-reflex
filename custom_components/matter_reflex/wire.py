@@ -1,4 +1,4 @@
-"""Version 1 rules. Integers are big-endian and node IDs never pass through a float."""
+"""Bounded rule images. Integers are big-endian and node IDs never pass through a float."""
 
 from dataclasses import dataclass
 from hashlib import sha256
@@ -6,6 +6,7 @@ from struct import Struct
 
 MAX_RULES = 32
 ROW = Struct(">IQHBBQHBhBBx")
+EXTENSION = Struct(">hH")  # threshold in hundredths, transition in tenths
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,7 +23,10 @@ class Rule:
     minimum: int = 1
     maximum: int = 254
 
-    def pack(self) -> bytes:
+    threshold: int = 0
+    transition: int = 0
+
+    def pack(self, version=1) -> bytes:
         return ROW.pack(
             self.rule_id,
             self.source,
@@ -35,7 +39,7 @@ class Rule:
             self.value,
             self.minimum,
             self.maximum,
-        )
+        ) + (EXTENSION.pack(self.threshold, self.transition) if version == 2 else b"")
 
 
 def encode(rules: list[Rule]) -> bytes:
@@ -43,10 +47,13 @@ def encode(rules: list[Rule]) -> bytes:
         raise ValueError("Too many rules")
     if len({r.rule_id for r in rules}) != len(rules):
         raise ValueError("Rule identifier collision")
+    version = 2 if any(r.event > 6 or r.op > 9 or r.transition for r in rules) else 1
     return (
         b"MRFX"
-        + bytes([1, len(rules), 0, 0])
-        + b"".join(rule.pack() for rule in sorted(rules, key=lambda r: r.rule_id))
+        + bytes([version, len(rules), 0, 0])
+        + b"".join(
+            rule.pack(version) for rule in sorted(rules, key=lambda r: r.rule_id)
+        )
     )
 
 

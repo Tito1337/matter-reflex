@@ -1,5 +1,6 @@
 #include "reflex_engine.h"
 #include <cassert>
+#include <algorithm>
 using namespace reflex;
 int main() {
     uint8_t wire[] = {0x4d,0x52,0x46,0x58,1,1,0,0,0,0,0,1,0x12,0x34,0x56,0x78,
@@ -55,4 +56,41 @@ int main() {
     assert(!decode_action(kCoverPosition, 101));
     assert(!decode_action(10, 0));
     assert(rules.rows[0].op == kCoverPosition && rules.rows[0].value == 100);
+
+    // Unrelated endpoints, clusters and nodes cannot prime or rearm a rule.
+    SensorState sensor;
+    r.event = kHumidityBelow;
+    r.threshold = 5012;
+    const auto report = [&](int value) { return sensor.report(r, r.source, 2, 0x405, value); };
+    assert(!report(5013));
+    assert(!sensor.report(r, r.source + 1, 2, 0x405, 5011));
+    assert(!sensor.report(r, r.source, 1, 0x405, 5011));
+    assert(!sensor.report(r, r.source, 2, 0x402, 5011));
+    assert(!report(5012) && report(5011) && !report(5000));
+    assert(!report(10001) && !report(4000));
+    assert(!report(5012) && report(4900));
+    assert(!report(kInvalidMeasurement) && !report(4900));
+
+    sensor = {};
+    r.event = kUnoccupied;
+    assert(!sensor.report(r, r.source, 2, 0x406, 1));
+    assert(!sensor.report(r, r.source, 2, 0x406, 3));
+    assert(sensor.report(r, r.source, 2, 0x406, 2));
+    assert(!sensor.report(r, r.source, 2, 0x406, 0));
+
+    uint8_t v2[44]{};
+    std::copy(wire, wire + sizeof(wire), v2);
+    v2[4] = 2;
+    v2[22] = kHumidityAbove;
+    v2[23] = 0;
+    v2[34] = kTiltPosition;
+    v2[36] = 75;
+    assert(decode(v2, sizeof(v2), rules));
+    assert(resolve(rules.rows[0], {-1,-1}, c) && c.op == kTiltPosition && c.value == 2500);
+    v2[40] = 0xff;  // negative humidity
+    assert(!decode(v2, sizeof(v2), rules));
+    v2[40] = 0;
+    v2[43] = 1;  // a covering does not accept a brightness transition
+    assert(!decode(v2, sizeof(v2), rules));
+    assert(!decode(v2, sizeof(v2)-1, rules));
 }
