@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Invoked by ./dev lab takeover from the checkout root.
+set -euo pipefail
+cache=firmware/build/reflex-lab
+mkdir -p "$cache"
+runtime=(podman --cgroup-manager=cgroupfs)
+case $(uname -m) in
+    x86_64) digest=560236344fd69dc8d74bc862c79aea01f7a69ac626ae3f54b1b0946bbce078c1 ;;
+    aarch64) digest=5481a2840c6b521d57709d1f7cad03fbcfe9dbedafda28d7d2635d2cbbedabd5 ;;
+    *) echo 'The C6 lab requires a Linux x86_64 or aarch64 runner.' >&2; exit 1 ;;
+esac
+pkg=esp-emu-1.2.0-$(uname -m)-unknown-linux-gnu
+if ! echo "$digest  $cache/$pkg.tgz" | sha256sum --status -c - 2>/dev/null; then
+    curl -fLsS --retry 3 "https://github.com/espressif/esp-emulator/releases/download/v1.2.0/$pkg.tar.gz" -o "$cache/$pkg.tgz"
+fi
+echo "$digest  $cache/$pkg.tgz" | sha256sum -c -
+tar -xzf "$cache/$pkg.tgz" -C "$cache" --strip-components=1 "$pkg/esp-emu"
+
+./dev matter idf.py -C firmware build
+"${runtime[@]}" run --rm -v "$PWD/$cache:/fixture:z" -v "$PWD/tests/lab/c6:/recipe:ro,z" "$REFLEX_LAB_IDF_IMAGE" bash -ec '
+    if [[ ! -f /fixture/router/CMakeLists.txt ]]; then
+        mkdir -p /fixture/router
+        cp -r "$IDF_PATH/examples/openthread/ot_br/." /fixture/router/
+    fi
+    if ! cmp -s /recipe/router.defaults /fixture/router/last.defaults; then
+        rm -f /fixture/router/sdkconfig
+        cp /recipe/router.defaults /fixture/router/last.defaults
+    fi
+    cd /fixture/router
+    cp /recipe/router.lock dependencies.lock
+    idf.py -D IDF_TARGET=esp32c6 -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;/recipe/router.defaults" build
+    cd build
+    python -m esptool --chip esp32c6 merge_bin -o /fixture/router.bin @flash_args
+'

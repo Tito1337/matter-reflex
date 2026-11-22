@@ -70,6 +70,15 @@ case "$mode" in
                 --entrypoint node "$controller_image" /app/reflex-lab/smoke.mjs
         fi
         export REFLEX_LAB_IMAGE="$controller_image" REFLEX_LAB_HA_IMAGE="$ha_image"
+        if [[ ${1:-} == takeover ]]; then
+            export REFLEX_LAB_IDF_IMAGE="$idf_image" REFLEX_LAB_MATTER_IMAGE="$matter_image"
+            mkdir -p "$project/firmware/build/reflex-lab"
+            # The two emulators read the build products throughout the run.
+            exec 9>"$project/firmware/build/reflex-lab/run.lock"
+            flock 9
+            "${podman_cmd[@]}" build -f "$project/tools/Containerfile.ha" -t "$ha_image" "$project/tools"
+            (cd "$project" && tests/lab/c6/prepare)
+        fi
         exec python3 "$project/tests/lab/lab.py" "$@"
         ;;
     test-sensors)

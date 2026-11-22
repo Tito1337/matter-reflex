@@ -17,6 +17,28 @@ podman --cgroup-manager=cgroupfs build -f tools/Containerfile.ha -t localhost/ma
 ./dev lab smoke-ha
 ```
 
+## Firmware takeover regression
+
+On Linux x86-64 or AArch64, run the same command as the firmware workflow:
+
+```sh
+./dev lab takeover
+```
+
+The first run builds the pinned HA test image, downloads a checksum-pinned ESP-EMU release, builds this checkout’s ESP32-C6 firmware and builds ESP-IDF’s OpenThread border router example. Later runs reuse the builds under `firmware/build`. The host needs Python 3, rootless Podman with IPv6 networking, and a usable `/dev/net/tun`. The TAP and IPv6 route settings belong to a disposable container network namespace. Each run generates fresh factory data, fabric credentials and a Home Assistant instance. No board, USB forwarding, household credentials or live HA instance is required.
+
+Two emulator processes exchange 802.15.4 frames. The runner provisions the unmodified Reflex firmware through its USB console, waits for routed IPv6 and commissions it with the button and targets. The installed HA integration renews the lease over Matter. When the pinned Matter Server requests the documented HTTP fallback for rule transfers, the runner provisions a fresh key over the virtual USB console and completes the normal HA setup flow. The button, targets and controller run in independent processes. The test stops the Matter Server container, keeps the virtual Thread network alive and drives the same gestures in each phase.
+
+| Phase | Required sender at lamp and blind | Other evidence |
+| --- | --- | --- |
+| Healthy HA | HA controller | Installed rules, standby lease, board subscriptions |
+| Matter Server stopped | Emulated Reflex node | Lease expired, board execution count increases by two |
+| Controller restarted | Original HA controller | New controller subscriptions, renewed lease, board count holds |
+
+Each phase checks the exact command count, order, arguments and actuator states. A missing command, wrong sender or duplicate fails the job. The radios and SoC peripherals are emulated. This regression covers firmware and Matter behavior under controller loss. RF range, interference and physical board peripherals require separate testing.
+
+The upstream emulator documents the radio bridge and the IDF example used here. [ESP-EMU Thread guide](https://github.com/espressif/esp-emulator/blob/v1.2.0/docs/guides/THREAD.md)
+
 ## Run against a test XIAO
 
 Use a dedicated Home Assistant fabric with Matter Server running in a named local Podman container. Connect the XIAO to that fabric through its Thread border router and configure the Matter Reflex integration. Keep HA and the border router in processes independent of Matter Server. The test host interface must support multicast discovery and routed IPv6 between the Thread board and the virtual peers. The peers listen on UDP ports 5570 and 5571. Enable test certificates on the lab Matter Server (the pinned JS server accepts `--enable-test-net-dcl`). The HA instance needs editable automations, as in the default `automation: !include automations.yaml` configuration.

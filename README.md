@@ -145,6 +145,8 @@ The lease measures whether Home Assistant can reach the XIAO. Reachability selec
 
 The offline Matter.js test commissions a multi-endpoint sensor node and a separate actuator node. It passes real subscription reports to the host build of the firmware rule engine and lease clock, then sends the resolved commands over Matter. The test covers door opening → light on, occupancy → brightness fade, leak → plug on, temperature falling below freezing → shade tilt to 25%, and humidity above 55% → light off. It also checks an ESP-first leak rule with a healthy HA lease, duplicate reports, reconnection with an already-open door, and fallback rules returning to standby. Run `./dev test-sensors` to reproduce it.
 
+The firmware CI job runs `./dev lab takeover` on a disposable Home Assistant fabric. Two emulated ESP32-C6s run the Reflex firmware and its Thread border router. The lamp and blind verify the sender of each command before, during and after a Matter Server outage. [Run the firmware regression locally](tests/lab/README.md#firmware-takeover-regression).
+
 MYGGBETT and MYGGSPRAY are configuration examples. Their standard capabilities were exercised with simulated devices. Physical confirmation of those models, leak and environmental triggers, brightness fades, and shade tilt is still pending.
 
 Update the board firmware and HA integration from this checkout before using the new capabilities. Firmware still loads stored version 1 rule images. The integration emits version 2 when a rule uses a sensor, tilt, or fade. Existing button-only configurations using the original actions keep their previous image format.

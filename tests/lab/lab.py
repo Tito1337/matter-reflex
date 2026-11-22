@@ -283,6 +283,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_subparsers(dest="mode", required=True)
     modes.add_parser(
+        "takeover", help="exercise HA takeover and handback with an emulated C6"
+    )
+    modes.add_parser(
         "smoke-ha",
         help="create a disposable HA, controller and peers on a private IPv6 network",
     )
@@ -319,10 +322,16 @@ def main():
         help="observe targets for late duplicate commands after each phase (default 4)",
     )
     args = parser.parse_args()
-    if args.mode == "smoke-ha":
+    if args.mode in {"smoke-ha", "takeover", "run"}:
+
+        def terminate(signum, frame):
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGTERM, terminate)
+    if args.mode in {"smoke-ha", "takeover"}:
         from ha_smoke import smoke
 
-        smoke()
+        smoke(with_board=args.mode == "takeover")
     elif args.mode == "up":
         up(args.interface)
     elif args.mode == "setup":
@@ -330,11 +339,6 @@ def main():
     elif args.mode == "down":
         down()
     else:
-
-        def terminate(signum, frame):
-            raise KeyboardInterrupt
-
-        signal.signal(signal.SIGTERM, terminate)
         run(args)
 
 

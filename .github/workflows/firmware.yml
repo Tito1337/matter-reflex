@@ -2,9 +2,9 @@ name: ESP32-C6 firmware
 on:
   workflow_dispatch:
   push:
-    paths: ['components/matter_reflex/reflex_*', 'firmware/**', 'dev', '.github/workflows/firmware.yml']
+    paths: ['components/matter_reflex/**', 'custom_components/matter_reflex/**', 'firmware/**', 'tests/lab/**', 'tools/factory.py', 'tools/Containerfile.ha', 'dev', '.github/workflows/firmware.yml']
   pull_request:
-    paths: ['components/matter_reflex/reflex_*', 'firmware/**', 'dev', '.github/workflows/firmware.yml']
+    paths: ['components/matter_reflex/**', 'custom_components/matter_reflex/**', 'firmware/**', 'tests/lab/**', 'tools/factory.py', 'tools/Containerfile.ha', 'dev', '.github/workflows/firmware.yml']
 
 permissions:
   contents: read
@@ -21,8 +21,8 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: |
           available_kib=$(df -Pk "$GITHUB_WORKSPACE" | awk 'NR==2 {print $4}')
-          if (( available_kib < 28 * 1024 * 1024 )); then
+          if (( available_kib < 36 * 1024 * 1024 )); then
             sudo rm -rf -- /usr/local/lib/android/sdk
           fi
-      - name: Compile and link the target firmware
-        run: ./dev matter idf.py -C firmware build
+      - name: Compile the C6 firmware and verify takeover and handback on virtual Thread
+        run: ./dev lab takeover
