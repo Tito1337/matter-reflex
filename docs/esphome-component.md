@@ -10,8 +10,8 @@ Merge the following into your existing YAML. The management package lets Home As
 
 ```yaml
 packages:
-  reflex: github://Tito1337/matter-reflex/examples/reflex.yaml@esphome-v0.2.0
-  management: github://Tito1337/matter-reflex/examples/encrypted-api.yaml@esphome-v0.2.0
+  reflex: github://Tito1337/matter-reflex/examples/reflex.yaml@14d9e91fae9826566f1faa1e6f9701b5b6b17f2d
+  management: github://Tito1337/matter-reflex/examples/encrypted-api.yaml@14d9e91fae9826566f1faa1e6f9701b5b6b17f2d
 
 substitutions:
   reflex_api_key: !secret reflex_api_key

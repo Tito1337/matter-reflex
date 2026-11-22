@@ -6,13 +6,13 @@ For a board that already runs ESPHome, [add Reflex to your existing node](../doc
 
 ## Install as an ESPHome package
 
-In your Device Builder configuration, import the tagged board package and set your own device name and secrets locally. This example is for a fresh board. For a commissioned standalone board follow the migration instructions below.
+In your Device Builder configuration, import the board package at the revision below and set your own device name and secrets locally. This example is for a fresh board. For a commissioned standalone board follow the migration instructions below.
 
 ```yaml
 packages:
-  reflex: github://Tito1337/matter-reflex/examples/xiao-base.yaml@esphome-v0.2.0
-  management: github://Tito1337/matter-reflex/examples/encrypted-api.yaml@esphome-v0.2.0
-  updates: github://Tito1337/matter-reflex/examples/ota.yaml@esphome-v0.2.0
+  reflex: github://Tito1337/matter-reflex/examples/xiao-base.yaml@14d9e91fae9826566f1faa1e6f9701b5b6b17f2d
+  management: github://Tito1337/matter-reflex/examples/encrypted-api.yaml@14d9e91fae9826566f1faa1e6f9701b5b6b17f2d
+  updates: github://Tito1337/matter-reflex/examples/ota.yaml@14d9e91fae9826566f1faa1e6f9701b5b6b17f2d
 
 substitutions:
   reflex_api_key: !secret reflex_api_key
@@ -24,7 +24,7 @@ openthread:
   tlv: !secret thread_tlv
 ```
 
-The tag selects the Reflex code and its tested Matter dependency. The checkout examples override the component source to build local changes.
+The pinned revision selects the Reflex code and its tested Matter dependency. The checkout examples override the component source to build local changes.
 
 The package defines an internal binary sensor named `reflex_active`. Its `on_press` and `on_release` automations light the XIAO user LED at takeover and turn it off at handback. The packaged `on_rule_result` automation logs each rule ID, source event number and command status over USB. Status zero means success. [Command result codes](../docs/troubleshooting.md)
 
