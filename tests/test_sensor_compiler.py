@@ -170,6 +170,10 @@ async def test_registry_sensor_to_light(
         {"1": 1, "2": 2, "3": [2], "4": [{"1": 3, "0": cluster, "2": None}], "254": 1}
     ]
 
+    monkeypatch.setattr(source.endpoints[3], "has_attribute", lambda *_: False)
+    with pytest.raises(RuntimeError, match="Waiting for the Matter sensor attribute"):
+        await async_compile(hass, "fabric")
+
 
 def test_multiple_thresholds_have_distinct_stable_ids():
     triggers = [

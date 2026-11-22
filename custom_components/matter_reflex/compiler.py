@@ -421,7 +421,7 @@ async def async_compile(
         state = hass.states.get(entity_id)
         if domain in ("binary_sensor", "sensor"):
             cluster = int(parts[2])
-            if parts[3] != "0" or not ep.has_attribute(cluster, 0):
+            if parts[3] != "0":
                 raise ValueError(f"Unsupported Matter sensor attribute on {entity_id}")
             if domain == "binary_sensor" and cluster == 0x45:
                 if ContactSensor in ep.device_types and parts[1] == "ContactSensor":
@@ -443,6 +443,12 @@ async def async_compile(
                     raise RuntimeError(f"Waiting for measurement units of {entity_id}")
             else:
                 raise ValueError(f"Unsupported Matter sensor cluster on {entity_id}")
+            # An incomplete sensor interview must not replace an installed rule
+            # image with one that omits this automation.
+            if not ep.has_attribute(cluster, 0):
+                raise RuntimeError(
+                    f"Waiting for the Matter sensor attribute of {entity_id}"
+                )
             return Endpoint(
                 node.node_id,
                 ep.endpoint_id,
