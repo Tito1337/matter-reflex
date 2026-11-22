@@ -1,10 +1,12 @@
 name: ESPHome firmware and extension example
 on:
   workflow_dispatch:
-  push:
-    paths: ['components/**', 'firmware/**', 'examples/**', 'tools/check-esphome', 'dev', '.github/workflows/esphome.yml']
-  pull_request:
-    paths: ['components/**', 'firmware/**', 'examples/**', 'tools/check-esphome', 'dev', '.github/workflows/esphome.yml']
+    inputs:
+      profile:
+        description: ESPHome example to compile
+        type: choice
+        default: xiao-esp32c6-ota
+        options: [xiao-esp32c6-ota, xiao-esp32c6-existing-ota, extend-node, all]
 
 permissions:
   contents: read
@@ -15,10 +17,12 @@ jobs:
     timeout-minutes: 90
     strategy:
       matrix:
-        profile: [xiao-esp32c6-ota, xiao-esp32c6-existing-ota, extend-node]
+        profile: ${{ fromJSON(inputs.profile == 'all' && '["xiao-esp32c6-ota","xiao-esp32c6-existing-ota","extend-node"]' || format('["{0}"]', inputs.profile)) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Compile and link with disposable credentials
-        run: tools/check-esphome compile ${{ matrix.profile }}
+        env:
+          ESPHOME_PROFILE: ${{ matrix.profile }}
+        run: tools/check-esphome compile "$ESPHOME_PROFILE"

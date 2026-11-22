@@ -59,9 +59,16 @@ If you change the firmware or SDK, also build the application for the microcontr
 ./dev matter idf.py -C firmware size
 ```
 
-The [software checks](.github/workflows/checks.yml) run on pushes and pull requests. The [ESP32-C6 build](.github/workflows/firmware.yml) runs when the firmware, its launcher, or its workflow changes. You can also run either workflow manually on GitHub.
+### Choose a test tier
 
-The [ESPHome firmware check](.github/workflows/esphome.yml) compiles the downstream component example and both Thread OTA layouts with disposable credentials. For local builds and the hardware verification sequence see the [XIAO profiles](examples/README.md).
+| When | What runs | How to run it |
+| --- | --- | --- |
+| Pull requests and pushes to `main` | One Linux job runs pytest, lint, the host C++ engine, Matter lease and sensor contracts, and the in-memory peer smoke test. New commits cancel superseded runs on the same PR. | [Project checks](.github/workflows/checks.yml) |
+| HA commissioning or controller recovery changes | A disposable Home Assistant commissions both peers and exercises their automations across a Matter Server restart. | `./dev lab smoke-ha` after building the HA test image, or manually select the checkbox in **Project checks**. |
+| Firmware ownership, Thread or takeover changes | The actual C6 firmware runs on virtual Thread. Choose direct, fallback, advanced or all three. | `./dev lab takeover --mode direct` or the manual [ESP32-C6 firmware workflow](.github/workflows/firmware.yml). |
+| ESPHome build or packaging changes | Compile one OTA profile, the extension example, or all three. | `tools/check-esphome compile extend-node` or the manual [ESPHome workflow](.github/workflows/esphome.yml). |
+
+For local builds and the hardware verification sequence see the [XIAO profiles](examples/README.md).
 
 ## Adding a Matter target
 

@@ -19,13 +19,16 @@ podman --cgroup-manager=cgroupfs build -f tools/Containerfile.ha -t localhost/ma
 
 ## Firmware takeover regression
 
-On Linux x86-64 or AArch64, run any of the three firmware workflow scenarios. Running `./dev lab takeover` selects fallback.
+Run the firmware regression locally on Linux x86-64 or AArch64. Select one mode for a focused check, or use `all` to prepare the firmware and border router once and run each mode on a fresh fabric. Running `./dev lab takeover` selects fallback.
 
 ```sh
 ./dev lab takeover --mode direct
 ./dev lab takeover --mode fallback
 ./dev lab takeover --mode advanced
+./dev lab takeover --mode all
 ```
+
+For a hosted run, select **Actions → ESP32-C6 firmware → Run workflow** and choose a mode. The menu defaults to direct. The full emulator runs only on request.
 
 The first run builds the pinned HA test image, downloads a checksum-pinned ESP-EMU release, builds this checkout’s ESP32-C6 firmware and builds ESP-IDF’s OpenThread border router example. Later runs reuse the builds under `firmware/build`. The host needs Python 3, rootless Podman with IPv6 networking, and a usable `/dev/net/tun`. The TAP and IPv6 route settings belong to a disposable container network namespace. Each run generates fresh factory data, fabric credentials and a Home Assistant instance. No board, USB forwarding, household credentials or live HA instance is required.
 

@@ -286,7 +286,7 @@ def main():
         "takeover", help="exercise controller loss and recovery with an emulated C6"
     ).add_argument(
         "--mode",
-        choices=("fallback", "direct", "advanced"),
+        choices=("fallback", "direct", "advanced", "all"),
         default="fallback",
         dest="policy",
     )
@@ -336,9 +336,16 @@ def main():
     if args.mode in {"smoke-ha", "takeover"}:
         from ha_smoke import smoke
 
-        smoke(
-            with_board=args.mode == "takeover", mode=getattr(args, "policy", "fallback")
-        )
+        if args.mode == "smoke-ha":
+            smoke()
+        else:
+            policies = (
+                ("direct", "fallback", "advanced")
+                if args.policy == "all"
+                else (args.policy,)
+            )
+            for policy in policies:
+                smoke(with_board=True, mode=policy)
     elif args.mode == "up":
         up(args.interface)
     elif args.mode == "setup":

@@ -1,10 +1,12 @@
 name: ESP32-C6 firmware
 on:
   workflow_dispatch:
-  push:
-    paths: ['components/matter_reflex/**', 'custom_components/matter_reflex/**', 'firmware/**', 'tests/lab/**', 'tools/factory.py', 'tools/Containerfile.ha', 'dev', '.github/workflows/firmware.yml']
-  pull_request:
-    paths: ['components/matter_reflex/**', 'custom_components/matter_reflex/**', 'firmware/**', 'tests/lab/**', 'tools/factory.py', 'tools/Containerfile.ha', 'dev', '.github/workflows/firmware.yml']
+    inputs:
+      mode:
+        description: Reflex execution mode to test on virtual Thread
+        type: choice
+        default: direct
+        options: [direct, fallback, advanced, all]
 
 permissions:
   contents: read
@@ -24,9 +26,7 @@ jobs:
           if (( available_kib < 36 * 1024 * 1024 )); then
             sudo rm -rf -- /usr/local/lib/android/sdk
           fi
-      - name: Verify direct Reflex ownership, HA takeover and ESP handback
-        run: ./dev lab takeover --mode direct
-      - name: Verify fallback takeover and handback
-        run: ./dev lab takeover --mode fallback
-      - name: Verify all six advanced handler pairs on one fabric
-        run: ./dev lab takeover --mode advanced
+      - name: Run selected firmware regression
+        env:
+          REFLEX_MODE: ${{ inputs.mode }}
+        run: ./dev lab takeover --mode "$REFLEX_MODE"
