@@ -288,6 +288,7 @@ async def test_permission_change_reconciles_with_same_rule_image(monkeypatch):
     runtime.client = Mock(return_value=client)
     runtime.acls = SimpleNamespace(reconcile=AsyncMock())
     runtime.transfer = AsyncMock()
+    runtime.activity = Mock()
     runtime.clear_issue = Mock()
     runtime.acl_synced = False
     runtime.synced_permissions = None

@@ -129,6 +129,12 @@ class StatusMonitor:
     def publish(self, status):
         rt = self.runtime
         if status != rt.status:
+            if (
+                status is None
+                or rt.status is None
+                or status["executions"] != rt.status["executions"]
+            ):
+                rt.activity.wake.set()
             rt.status = status
             rt.notify()
             if (

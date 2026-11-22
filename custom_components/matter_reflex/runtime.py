@@ -17,8 +17,9 @@ from homeassistant.helpers.storage import Store
 
 from . import native
 from .acl import AclManager
+from .activity import Activity
 from .compiler import async_compile
-from .const import DOMAIN, HEARTBEAT_SECONDS
+from .const import DOMAIN, HEARTBEAT_SECONDS, LEASE_SECONDS
 from .status import RETRY_INTERVAL, StatusMonitor
 from .transport import (
     CHANNEL_ERRORS,
@@ -67,6 +68,9 @@ class Runtime:
         self.status = None
         self.native_status_readable = False
         self.monitor = StatusMonitor(self)
+        self.activity = Activity(self)
+        # Mirror the ESP's startup quiet period and monotonic lease.
+        self.esp_deadline = None
         self.target_hash = None
         self.last_sync = None
         self.acl_synced = False
@@ -78,6 +82,14 @@ class Runtime:
         if self.status is None:
             return None
         return self.acl_synced and self.status["hash"] == self.target_hash
+
+    @property
+    def esp_lease_expired(self):
+        return (
+            self.hass.state is CoreState.running
+            and self.esp_deadline is not None
+            and monotonic() >= self.esp_deadline
+        )
 
     def client(self):
         return client_for(
@@ -100,7 +112,12 @@ class Runtime:
             self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._state)
         )
         self.monitor.start()
-        for target in (self._lease_loop, self._status_loop, self._sync_loop):
+        for target in (
+            self._lease_loop,
+            self._status_loop,
+            self._sync_loop,
+            self.activity.run,
+        ):
             self.entry.async_create_background_task(
                 self.hass, self._maintain_task(target), target.__name__
             )
@@ -155,10 +172,14 @@ class Runtime:
         verified = None
         use_action = False
         next_tick = None
+        first_running_tick = True
         while True:
             started = monotonic()
             try:
                 if self.hass.state is CoreState.running:
+                    if first_running_tick:
+                        self.esp_deadline = started + LEASE_SECONDS
+                        first_running_tick = False
                     async with asyncio.timeout(4):
                         client = self.client()
                         node = client.get_node(self.node)
@@ -177,6 +198,7 @@ class Runtime:
                             verified = current
                         started = monotonic()  # Discovery can delay dispatch.
                         await native.renew(client, self.node, use_action)
+                        self.esp_deadline = monotonic() + LEASE_SECONDS
                         if clear_repair:
                             self.clear_issue("lease")
                             clear_repair = False
@@ -272,7 +294,10 @@ class Runtime:
         if not is_reflex(node):
             raise ReflexError("The selected Matter node has no Reflex endpoint")
         compiled = await async_compile(
-            self.hass, self.entry.data["matter_entry_id"], self.node
+            self.hass,
+            self.entry.data["matter_entry_id"],
+            self.node,
+            self.entry.entry_id,
         )
         current = set()
         for rule, reason in compiled.issues.items():
@@ -302,6 +327,7 @@ class Runtime:
             and self.last_sync
             and (datetime.now(UTC) - self.last_sync).total_seconds() < 3600
         ):
+            self.activity.configure(expected, compiled.activity)
             return
         await self.acls.reconcile(client, compiled.permissions, prune=False)
         if observed["hash"] != self.target_hash:
@@ -314,4 +340,5 @@ class Runtime:
         self.last_sync = datetime.now(UTC)
         self.synced_permissions = compiled.permissions
         self.acl_synced = True
+        self.activity.configure(expected, compiled.activity)
         self.clear_issue("sync")

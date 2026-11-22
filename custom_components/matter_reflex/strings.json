@@ -60,5 +60,49 @@
         "name": "Last synchronization"
       }
     }
+  },
+  "selector": {
+    "mode": {
+      "options": {
+        "direct": "Direct reflex",
+        "fallback": "Fallback reflex"
+      }
+    },
+    "handler": {
+      "options": {
+        "esp": "ESP",
+        "ha": "Home Assistant",
+        "none": "None"
+      }
+    }
+  },
+  "conditions": {
+    "mode": {
+      "name": "Reflex mode",
+      "description": "Choose who handles this automation.",
+      "fields": {
+        "esp": {
+          "name": "ESP"
+        },
+        "mode": {
+          "name": "Mode"
+        }
+      }
+    },
+    "handlers": {
+      "name": "Reflex handlers (advanced)",
+      "description": "Choose normal and degraded handlers independently.",
+      "fields": {
+        "esp": {
+          "name": "ESP"
+        },
+        "normal_handler": {
+          "name": "Normal handler"
+        },
+        "degraded_handler": {
+          "name": "Degraded handler"
+        }
+      }
+    }
   }
 }

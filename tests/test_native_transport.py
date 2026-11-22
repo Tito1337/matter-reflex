@@ -72,6 +72,7 @@ async def test_lease_dispatch_slots_survive_lost_renewal(
     runtime.node = 31
     runtime.clear_issue = Mock()
     starts = []
+    deadlines = []
 
     async def discover(*args):
         if not starts:
@@ -80,6 +81,7 @@ async def test_lease_dispatch_slots_survive_lost_renewal(
 
     async def send(*args, **kwargs):
         starts.append(lease_clock.now)
+        deadlines.append(runtime.esp_deadline)
         if len(starts) == 2:
             lease_clock.now += miss_duration
             raise failure
@@ -95,6 +97,9 @@ async def test_lease_dispatch_slots_survive_lost_renewal(
     with pytest.raises(asyncio.CancelledError):
         await runtime._lease_loop()
     assert starts == pytest.approx(expected)
+    # A failed or cancelled renewal cannot extend the reciprocal HA deadline.
+    assert deadlines[1:3] == pytest.approx([11.25, 11.25])
+    assert runtime.esp_deadline == pytest.approx(starts[-1] + 10.25)
 
 
 @pytest.mark.asyncio

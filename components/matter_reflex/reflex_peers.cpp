@@ -179,11 +179,11 @@ Peer *ensure(NodeId node) {
 }
 
 template<typename Request>
-CHIP_ERROR invoke(const SessionHandle &session, const reflex::Rule &rule, EventNumber number, const Request &request) {
+CHIP_ERROR invoke(const SessionHandle &session, const reflex::Rule &rule, EventNumber number, uint64_t run, const Request &request) {
     const auto id = rule.id;
     const auto revision = generation;
-    auto done = [revision, id, number](uint16_t status) {
-        if (revision == generation) reflex_runtime::command_result(id, number, status);
+    auto done = [revision, id, number, run](uint16_t status) {
+        if (revision == generation) reflex_runtime::command_result(id, number, status, run);
     };
     auto success = [done](const ConcreteCommandPath &, const StatusIB &status, const auto &) {
         done(static_cast<uint16_t>(status.mStatus));
@@ -195,55 +195,55 @@ CHIP_ERROR invoke(const SessionHandle &session, const reflex::Rule &rule, EventN
                                            rule.target_ep, request, success, failure);
 }
 
-void dispatch(size_t index, EventNumber number) {
+void dispatch(size_t index, EventNumber number, uint64_t run) {
     const auto &rule = rule_set->rows[index];
     auto *target = find(rule.target);
     auto session = target ? target->session.Get() : Optional<SessionHandle>();
     if (!target || !target->established || !session.HasValue() || !session.Value()->IsActiveSession()) {
-        reflex_runtime::command_result(rule.id, number, kNoSession);
+        reflex_runtime::command_result(rule.id, number, kNoSession, run);
         return;
     }
     reflex::Command command{};
     if (!reflex::resolve(rule, states[index], command)) {
-        reflex_runtime::command_result(rule.id, number, kUnknownState);
+        reflex_runtime::command_result(rule.id, number, kUnknownState, run);
         return;
     }
     CHIP_ERROR error;
     namespace covering = Clusters::WindowCovering::Commands;
     switch (command.op) {
     case 0:
-        error = invoke(session.Value(), rule, number, Clusters::OnOff::Commands::Off::Type{});
+        error = invoke(session.Value(), rule, number, run, Clusters::OnOff::Commands::Off::Type{});
         break;
     case 1:
-        error = invoke(session.Value(), rule, number, Clusters::OnOff::Commands::On::Type{});
+        error = invoke(session.Value(), rule, number, run, Clusters::OnOff::Commands::On::Type{});
         break;
     case 3: {
         Clusters::LevelControl::Commands::MoveToLevelWithOnOff::Type request;
         request.level = static_cast<uint8_t>(command.value);
         request.transitionTime.SetNonNull(0);
-        error = invoke(session.Value(), rule, number, request);
+        error = invoke(session.Value(), rule, number, run, request);
         break;
     }
     case reflex::kCoverOpen:
-        error = invoke(session.Value(), rule, number, covering::UpOrOpen::Type{});
+        error = invoke(session.Value(), rule, number, run, covering::UpOrOpen::Type{});
         break;
     case reflex::kCoverClose:
-        error = invoke(session.Value(), rule, number, covering::DownOrClose::Type{});
+        error = invoke(session.Value(), rule, number, run, covering::DownOrClose::Type{});
         break;
     case reflex::kCoverStop:
-        error = invoke(session.Value(), rule, number, covering::StopMotion::Type{});
+        error = invoke(session.Value(), rule, number, run, covering::StopMotion::Type{});
         break;
     case reflex::kCoverPosition: {
         covering::GoToLiftPercentage::Type request;
         request.liftPercent100thsValue = command.value;
-        error = invoke(session.Value(), rule, number, request);
+        error = invoke(session.Value(), rule, number, run, request);
         break;
     }
     default:
         error = CHIP_ERROR_INVALID_ARGUMENT;
     }
     if (error != CHIP_NO_ERROR) {
-        reflex_runtime::command_result(rule.id, number, kTransportError);
+        reflex_runtime::command_result(rule.id, number, kTransportError, run);
         return;
     }
     if (reflex::is_cover(command.op)) return;
@@ -263,16 +263,18 @@ void Peer::OnEventData(const EventHeader &h, TLV::TLVReader *r, const StatusIB *
     high_water.SetValue(h.mEventNumber);
     // Initial and reconnect priming reports may contain historical button
     // presses, including ones already handled by HA before the outage.
-    if (!established || !reflex_runtime::active() || h.mPath.mEventId > 6) return;
+    if (!established || h.mPath.mEventId > 6) return;
     uint8_t presses = 0;
     if (h.mPath.mEventId == Clusters::Switch::Events::MultiPressComplete::Id) {
         Clusters::Switch::Events::MultiPressComplete::DecodableType value;
         if (value.Decode(*r) != CHIP_NO_ERROR) return;
         presses = value.totalNumberOfPressesCounted;
     }
+    const uint64_t run = reflex_runtime::next_run();
     for (size_t i = 0; i < rule_set->count; ++i) {
-        if (reflex::matches(rule_set->rows[i], node, h.mPath.mEndpointId, h.mPath.mEventId, presses))
-            dispatch(i, h.mEventNumber);
+        if (reflex_runtime::handles(rule_set->rows[i]) &&
+            reflex::matches(rule_set->rows[i], node, h.mPath.mEndpointId, h.mPath.mEventId, presses))
+            dispatch(i, h.mEventNumber, rule_set->rows[i].direct ? run : 0);
     }
 }
 } // namespace

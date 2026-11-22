@@ -27,6 +27,9 @@ async def compile_plug(
     disabled_by=None,
     category=None,
     reflex_node=99,
+    conditions=None,
+    tagged=True,
+    entry_id=None,
     product="GRILLPLATS",
     vendor=4476,
     data=None,
@@ -89,6 +92,10 @@ async def compile_plug(
             }
         ],
     }
+    if conditions is not None:
+        cfg["conditions"] = conditions
+    if not tagged:
+        automation.labels.clear()
     hass = SimpleNamespace(
         config_entries=SimpleNamespace(
             async_get_entry=lambda _: SimpleNamespace(runtime_data=runtime)
@@ -115,7 +122,7 @@ async def compile_plug(
             async_get_label_by_name=lambda _: SimpleNamespace(label_id="reflex")
         ),
     )
-    return await async_compile(hass, "fabric", reflex_node)
+    return await async_compile(hass, "fabric", reflex_node, entry_id)
 
 
 @pytest.mark.asyncio
@@ -177,3 +184,44 @@ async def test_unrelated_outlet_with_incomplete_basic_information(monkeypatch):
 async def test_missing_command_report_does_not_compile_an_empty_image(monkeypatch):
     with pytest.raises(RuntimeError, match="Waiting for the Matter commands"):
         await compile_plug(monkeypatch, commands=None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tagged", [True, False])
+async def test_direct_gate_replaces_label_and_selects_one_esp(monkeypatch, tagged):
+    gate = {
+        "condition": "matter_reflex.mode",
+        "options": {"mode": "direct", "esp": "board-a"},
+    }
+    cfg = {"tagged": tagged, "conditions": [gate]}
+    first = await compile_plug(monkeypatch, **cfg, entry_id="board-a")
+    second = await compile_plug(monkeypatch, **cfg, entry_id="board-b")
+    assert first.issues == second.issues == {}
+    assert ROW.unpack(first.image[8:])[7] == 0x82
+    assert next(iter(first.activity.values())).target == "switch.anything"
+    assert second.image == encode([])
+    unsafe = await compile_plug(
+        monkeypatch,
+        entry_id="board-a",
+        tagged=False,
+        conditions=[gate, {"condition": "template", "value_template": "false"}],
+    )
+    assert unsafe.image == encode([]) and "automation.socket" in unsafe.issues
+
+
+@pytest.mark.asyncio
+async def test_nested_ownership_condition_reports_repair(monkeypatch):
+    nested = {
+        "condition": "or",
+        "conditions": [
+            {
+                "condition": "matter_reflex.mode",
+                "options": {"mode": "direct", "esp": "board-a"},
+            }
+        ],
+    }
+    result = await compile_plug(
+        monkeypatch, conditions=[nested], tagged=False, entry_id="board-a"
+    )
+    assert result.image == encode([])
+    assert "top level" in result.issues["automation.socket"]

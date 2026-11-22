@@ -3,10 +3,11 @@
 import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 
 from .const import CLUSTER, ENDPOINT, VENDOR
+from .policy import FALLBACK, configured_policy
 from .wire import Rule, encode
 
 EVENTS = {
@@ -46,10 +47,19 @@ class Endpoint:
 
 
 @dataclass
+class ActivityRule:
+    entity_id: str
+    trigger: tuple[int, int, int, int]
+    target: str
+
+
+@dataclass
 class Compilation:
     image: bytes
     issues: dict[str, str]
     permissions: dict[int, set[tuple[int, int, int]]]
+    # Rows from one trigger share a source, gesture, and automation entity.
+    activity: dict[int, ActivityRule] = field(default_factory=dict)
 
 
 def only(obj, allowed):
@@ -236,7 +246,10 @@ def cover_operations(features, accepted_commands):
 
 
 async def async_compile(
-    hass, matter_entry_id: str, reflex_node: int | None = None
+    hass,
+    matter_entry_id: str,
+    reflex_node: int | None = None,
+    entry_id: str | None = None,
 ) -> Compilation:
     from homeassistant.components.automation.const import DATA_COMPONENT
     from homeassistant.components.matter.helpers import get_device_id
@@ -250,8 +263,6 @@ async def async_compile(
     registry = er.async_get(hass)
     labels = lr.async_get(hass)
     label = labels.async_get_label_by_name("reflex")
-    if not label:
-        return Compilation(encode([]), {}, {})
     entry = hass.config_entries.async_get_entry(matter_entry_id)
     if not entry or not entry.runtime_data:
         raise RuntimeError("Matter integration is unavailable")
@@ -275,6 +286,8 @@ async def async_compile(
                 return commands
         raise RuntimeError(f"Waiting for the Matter commands of {entity_id}")
 
+    target_names = {}
+
     def lookup(entity_id):
         reg = registry.async_get(entity_id)
         if (
@@ -295,6 +308,8 @@ async def async_compile(
             raise RuntimeError(f"Waiting for Matter endpoint {entity_id}")
         node, ep = endpoints[parts[0]]
         domain = reg.domain
+        if domain != "event":
+            target_names[(node.node_id, ep.endpoint_id)] = entity_id
         required_cluster = {
             "light": 6,
             "event": 59,
@@ -367,29 +382,43 @@ async def async_compile(
     component = hass.data.get(DATA_COMPONENT)
     if component is None:
         raise RuntimeError("HA automations have not finished loading")
-    rules, issues, permissions = [], {}, {}
+    rules, issues, permissions, activity = [], {}, {}, {}
     for reg in sorted(registry.entities.values(), key=lambda ent: ent.entity_id):
-        if (
-            reg.domain != "automation"
-            or label.label_id not in reg.labels
-            or reg.disabled_by
-        ):
+        if reg.domain != "automation" or reg.disabled_by:
             continue
         entity_id = reg.entity_id
         state = hass.states.get(entity_id)
         if state and state.state == "off":
             continue
+        tagged = label is not None and label.label_id in reg.labels
         automation = component.get_entity(entity_id)
-        if not automation or not state or state.state not in ("on", "off"):
-            raise RuntimeError(f"Waiting for automation {entity_id}")
-        if not automation.raw_config:
-            issues[entity_id] = (
-                "Automation is unavailable or its configuration cannot be read"
-            )
+        if not automation or not state or state.state != "on":
+            if tagged:
+                raise RuntimeError(f"Waiting for automation {entity_id}")
+            continue
+        config = automation.raw_config
+        if not config:
+            if tagged:
+                issues[entity_id] = "Automation configuration cannot be read"
             continue
         try:
-            dimmable.clear()  # only successfully compiled light actions justify LevelControl
-            added = compile_automation(reg.unique_id, automation.raw_config, lookup)
+            explicit = configured_policy(config)
+            if explicit is None and not tagged:
+                continue
+            handlers = FALLBACK
+            if explicit is not None:
+                selected, handlers, remaining = explicit
+                if selected != entry_id or "esp" not in (
+                    handlers.normal,
+                    handlers.degraded,
+                ):
+                    continue
+                config = {**config, "conditions": remaining}
+            dimmable.clear()
+            target_names.clear()
+            added = compile_automation(reg.unique_id, config, lookup)
+            if handlers.normal == "esp":
+                added = [replace(row, direct=True) for row in added]
             encode(
                 rules + added
             )  # capacity and hash collision checked atomically per automation
@@ -398,6 +427,12 @@ async def async_compile(
             continue
         rules.extend(added)
         for row in added:
+            if row.direct:
+                activity[row.rule_id] = ActivityRule(
+                    entity_id,
+                    (row.source, row.source_ep, row.event, row.presses),
+                    target_names[(row.target, row.target_ep)],
+                )
             permissions.setdefault(row.source, set()).add((row.source_ep, 59, 1))
             dest = permissions.setdefault(row.target, set())
             if row.op in COVER_OPERATIONS.values():
@@ -406,4 +441,4 @@ async def async_compile(
                 dest.add((row.target_ep, 6, 3))
                 if (row.target, row.target_ep) in dimmable:
                     dest.add((row.target_ep, 8, 3))
-    return Compilation(encode(rules), issues, permissions)
+    return Compilation(encode(rules), issues, permissions, activity)

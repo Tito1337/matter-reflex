@@ -22,6 +22,8 @@ class Rule:
     minimum: int = 1
     maximum: int = 254
 
+    direct: bool = False
+
     def pack(self) -> bytes:
         return ROW.pack(
             self.rule_id,
@@ -31,7 +33,7 @@ class Rule:
             self.presses,
             self.target,
             self.target_ep,
-            self.op,
+            self.op | (0x80 if self.direct else 0),
             self.value,
             self.minimum,
             self.maximum,

@@ -1,6 +1,7 @@
 """Emit a binary MRFX image using the documented automation and real compiler."""
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -27,5 +28,8 @@ for service, entity, data in (
         "triggers": example["triggers"],
         "actions": [{"action": service, "target": {"entity_id": entity}, "data": data}],
     }
-    rows.extend(compile_automation(entity, config, endpoints.__getitem__))
+    compiled = compile_automation(entity, config, endpoints.__getitem__)
+    if entity == "switch.outlet":
+        compiled = [replace(row, direct=True) for row in compiled]
+    rows.extend(compiled)
 sys.stdout.buffer.write(encode(rows))

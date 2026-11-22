@@ -40,7 +40,9 @@ bool decode(const uint8_t *data, size_t len, Rules &out) {
         r.event = p[14]; r.presses = p[15];
         r.target = read_be(p + 16, 8);
         r.target_ep = read_be(p + 24, 2);
-        r.op = p[26];
+        // Legacy firmware rejects an unknown opcode, including this high bit.
+        r.direct = (p[26] & 0x80) != 0;
+        r.op = p[26] & 0x7f;
         const int raw = read_be(p + 27, 2);
         r.value = raw >= 32768 ? raw - 65536 : raw;
         r.min_level = p[29]; r.max_level = p[30];

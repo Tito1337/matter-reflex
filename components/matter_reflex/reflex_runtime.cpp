@@ -19,6 +19,9 @@
 #include <nvs.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <cstring>
+#include <cstdio>
+#include <cinttypes>
+#include <esp_random.h>
 
 namespace reflex_runtime {
 using namespace chip;
@@ -26,11 +29,16 @@ using namespace chip::app;
 namespace {
 constexpr EndpointId kEndpoint = 1;
 constexpr ClusterId kCluster = 0xfff1fc00;
-enum Attribute : AttributeId { Lease, Transfer, Hash, Active, Executions };
+enum Attribute : AttributeId { Lease, Transfer, Hash, Active, Executions, JournalStart };
 constexpr char kHex[] = "0123456789abcdef";
 nvs_handle_t storage;
 reflex::LeaseDeadline deadline;
 uint32_t execution_count;
+struct Outcome { uint64_t run; uint32_t rule; uint16_t status; };
+constexpr size_t kJournalSize = 8 * kJournalPages;
+Outcome journal[kJournalSize];
+size_t journal_write, journal_count;
+uint32_t boot_nonce, run_sequence;
 bool reported_active;
 void (*active_changed)(bool);
 ResultListener result_listener;
@@ -99,6 +107,7 @@ void select_fabric() {
     local_node = node;
     deadline.reset(esp_timer_get_time());
     staging.expected = 0;
+    journal_count = journal_write = 0;
     rules.count = 0;
     digest[0] = 0;
     size_t n = sizeof(record);
@@ -248,6 +257,11 @@ class Attributes : public AttributeAccessInterface {
 public:
     Attributes() : AttributeAccessInterface(MakeOptional(kEndpoint), kCluster) {}
     CHIP_ERROR Read(const ConcreteReadAttributePath &p, AttributeValueEncoder &e) override {
+        if (p.mAttributeId >= JournalStart && p.mAttributeId < JournalStart + kJournalPages) {
+            char page[kJournalPageChars + 1];
+            journal_page(p.mAttributeId - JournalStart, page);
+            return e.Encode(CharSpan::fromCharString(page));
+        }
         switch (p.mAttributeId) {
         case Lease: return e.Encode(deadline.granted_seconds());
         case Transfer: return e.Encode(CharSpan());
@@ -295,6 +309,9 @@ void timer(System::Layer *layer, void *) {
 } // namespace
 
 bool active() { return owner_current() && deadline.expired(esp_timer_get_time()); }
+bool handles(const reflex::Rule &rule) {
+    return owner_current() && rule.handles(deadline.expired(esp_timer_get_time()));
+}
 const char *rules_hash() { return owner_current() ? digest : ""; }
 uint32_t executions() { return execution_count; }
 uint64_t self_node() { return owner_current() ? local_node : 0; }
@@ -315,6 +332,7 @@ bool replace_image(const uint8_t *data, size_t size) {
     if (nvs_set_blob(storage, "rules", &record, offsetof(Record, image)+size) != ESP_OK || nvs_commit(storage) != ESP_OK)
         return false;
     rules = candidate;
+    journal_count = journal_write = 0;
     memcpy(digest, hex, sizeof(digest));
     reflex_peers::configure(fabric_index, rules);
     changed(Hash);
@@ -384,6 +402,8 @@ void create_cluster(esp_matter::endpoint_t *endpoint) {
     add(Hash, esp_matter_char_str(empty, 0), false, 64);
     add(Active, esp_matter_bool(false));
     add(Executions, esp_matter_uint32(0));
+    for (size_t i = 0; i < kJournalPages; ++i)
+        add(JournalStart + i, esp_matter_char_str(empty, 0), false, kJournalPageChars);
     ESP_ERROR_CHECK(event::create(cluster, 0) ? ESP_OK : ESP_ERR_NO_MEM);
 }
 
@@ -394,6 +414,7 @@ void start(void (*on_active_changed)(bool), ResultListener on_result) {
     ESP_ERROR_CHECK(AttributeAccessInterfaceRegistry::Instance().Register(&action_lists) ? ESP_OK : ESP_FAIL);
     ESP_ERROR_CHECK(AttributeAccessInterfaceRegistry::Instance().Register(&access) ? ESP_OK : ESP_FAIL);
     ESP_ERROR_CHECK(CommandHandlerInterfaceRegistry::Instance().RegisterCommandHandler(&lease_output) == CHIP_NO_ERROR ? ESP_OK : ESP_FAIL);
+    boot_nonce = esp_random();
     initialized = true;
     timer(&DeviceLayer::SystemLayer(), nullptr);
 }
@@ -419,8 +440,29 @@ struct Executed {
     }
 };
 
-void command_result(uint32_t rule, uint64_t event, uint16_t status) {
+uint64_t next_run() {
+    if (++run_sequence == 0) { boot_nonce = esp_random(); ++run_sequence; }
+    return (uint64_t(boot_nonce) << 32) | run_sequence;
+}
+
+void journal_page(size_t page, char *output) {
+    *output = 0;
+    if (!owner_current() || page >= kJournalPages) return;
+    const size_t oldest = (journal_write + kJournalSize - journal_count) % kJournalSize;
+    for (size_t i = page * 8; i < (page + 1) * 8 && i < journal_count; ++i) {
+        const auto &item = journal[(oldest + i) % kJournalSize];
+        snprintf(output, 29, "%016" PRIx64 "%08" PRIx32 "%04x", item.run, item.rule, unsigned(item.status));
+        output += 28;
+    }
+}
+
+void command_result(uint32_t rule, uint64_t event, uint16_t status, uint64_t run) {
     if (!owner_current()) return;
+    if (run) {
+        journal[journal_write] = {run, rule, status};
+        journal_write = (journal_write + 1) % kJournalSize;
+        if (journal_count < kJournalSize) ++journal_count;
+    }
     ++execution_count;
     if (result_listener) result_listener(rule, event, status);
     changed(Executions);

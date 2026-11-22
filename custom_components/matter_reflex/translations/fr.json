@@ -60,5 +60,49 @@
         "name": "Dernière synchronisation"
       }
     }
+  },
+  "selector": {
+    "mode": {
+      "options": {
+        "direct": "Réflexe direct",
+        "fallback": "Réflexe de secours"
+      }
+    },
+    "handler": {
+      "options": {
+        "esp": "ESP",
+        "ha": "Home Assistant",
+        "none": "Aucun"
+      }
+    }
+  },
+  "conditions": {
+    "mode": {
+      "name": "Mode réflexe",
+      "description": "Choisit qui exécute cette automatisation.",
+      "fields": {
+        "esp": {
+          "name": "ESP"
+        },
+        "mode": {
+          "name": "Mode"
+        }
+      }
+    },
+    "handlers": {
+      "name": "Gestionnaires du réflexe (avancé)",
+      "description": "Choisissez les gestionnaires normal et dégradé.",
+      "fields": {
+        "esp": {
+          "name": "ESP"
+        },
+        "normal_handler": {
+          "name": "Gestionnaire normal"
+        },
+        "degraded_handler": {
+          "name": "Gestionnaire dégradé"
+        }
+      }
+    }
   }
 }

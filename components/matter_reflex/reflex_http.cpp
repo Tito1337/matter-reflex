@@ -98,9 +98,11 @@ esp_err_t challenge(httpd_req_t *req) {
 esp_err_t request(httpd_req_t *req) {
     const char *path = static_cast<const char *>(req->user_ctx);
     const bool status = strcmp(path, "/v1/status") == 0;
-    const size_t limit = status ? 0 : reflex::kMaxImage;
+    const bool activity = strcmp(path, "/v1/activity") == 0;
+    const bool read = status || activity;
+    const size_t limit = read ? 0 : reflex::kMaxImage;
     const size_t size = req->content_len;
-    if (size > limit || (!status && !size)) return fail(req, "400 Bad Request");
+    if (size > limit || (!read && !size)) return fail(req, "400 Bad Request");
     char nonce[33], signature[65];
     if (httpd_req_get_hdr_value_len(req, "X-Reflex-Nonce") != 32 ||
         httpd_req_get_hdr_value_len(req, "X-Reflex-Mac") != 64 ||
@@ -114,7 +116,7 @@ esp_err_t request(httpd_req_t *req) {
         if (n <= 0) return ESP_FAIL;
         done += n;
     }
-    char expected[65], response[200]{};
+    char expected[65], response[200 + reflex_runtime::kJournalPages * reflex_runtime::kJournalPageChars]{};
     bool authorized = false, applied = false, signed_reply = false;
     xSemaphoreTake(mutex, portMAX_DELAY);
     if (configured && mac(key, "REQ", nonce, path, body.data(), size, expected) &&
@@ -144,6 +146,14 @@ esp_err_t request(httpd_req_t *req) {
         xSemaphoreGive(mutex);
         if (!authorized) {
             applied = false;
+        } else if (activity) {
+            size_t pos = snprintf(response, sizeof(response), "{\"hash\":\"%s\",\"journal\":\"", reflex_runtime::rules_hash());
+            for (size_t page = 0; page < reflex_runtime::kJournalPages; ++page) {
+                reflex_runtime::journal_page(page, response + pos);
+                pos += strlen(response + pos);
+            }
+            strcpy(response + pos, "\"}");
+            applied = true;
         } else if (status) {
             applied = node != 0;
             snprintf(response, sizeof(response),
@@ -211,7 +221,7 @@ esp_err_t reflex_http_start(const char *boot_key) {
     cfg.send_wait_timeout = 2; cfg.lru_purge_enable = true;
     esp_err_t err = httpd_start(&server, &cfg);
     if (err != ESP_OK) return err;
-    for (const char *path : {"/v1/challenge", "/v1/status", "/v1/rules"}) {
+    for (const char *path : {"/v1/challenge", "/v1/status", "/v1/rules", "/v1/activity"}) {
         httpd_uri_t handler{};
         handler.uri = path;
         const bool get = strcmp(path, "/v1/challenge") == 0;

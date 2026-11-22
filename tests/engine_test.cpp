@@ -34,7 +34,13 @@ int main() {
         assert(decode_action(op, 0));
         assert(resolve(rules.rows[0], {-1, -1}, c) && c.op == op);
     }
+    assert(decode_action(0x82, 0));
+    assert(rules.rows[0].direct && rules.rows[0].op == 2);
+    assert(rules.rows[0].handles(false) && rules.rows[0].handles(true));
+    assert(!decode_action(0xff, 0));
     assert(decode_action(2, 0));
+    assert(!rules.rows[0].direct);
+    assert(!rules.rows[0].handles(false) && rules.rows[0].handles(true));
     assert(!resolve(rules.rows[0], {-1, -1}, c));
     assert(resolve(rules.rows[0], {0, -1}, c) && c.op == 1);
     assert(resolve(rules.rows[0], {1, -1}, c) && c.op == 0);

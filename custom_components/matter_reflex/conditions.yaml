@@ -1,0 +1,25 @@
+mode:
+  fields:
+    esp: &esp
+      required: true
+      selector:
+        config_entry:
+          integration: matter_reflex
+    mode:
+      required: true
+      default: fallback
+      selector:
+        select:
+          translation_key: mode
+          options: [direct, fallback]
+
+handlers:
+  fields:
+    esp: *esp
+    normal_handler: &handler
+      required: true
+      selector:
+        select:
+          translation_key: handler
+          options: [esp, ha, none]
+    degraded_handler: *handler

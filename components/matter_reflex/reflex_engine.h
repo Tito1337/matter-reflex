@@ -12,6 +12,8 @@ struct Rule {
     uint8_t event, presses, op;
     int16_t value;
     uint8_t min_level, max_level;
+    bool direct = false;
+    bool handles(bool lease_expired) const { return direct || lease_expired; }
 };
 struct Rules { Rule rows[kMaxRules]; size_t count; };
 struct State { int on, level; };  // -1 when unavailable

@@ -135,7 +135,7 @@ class Channel:
         async with self.session.post(
             base + path, data=body, headers=headers, allow_redirects=False
         ) as resp:
-            reply = await self._read(resp, 512)
+            reply = await self._read(resp, 1200 if path == "/v1/activity" else 512)
             mac = resp.headers.get("X-Reflex-Mac", "")
         expected = signature(self.key, "RES", nonce, path, "200", body=reply)
         if not re.fullmatch("[0-9a-f]{64}", mac) or not hmac.compare_digest(
@@ -146,6 +146,9 @@ class Channel:
 
     async def send_rules(self, client, image):
         await self.request(client, "rules", image)
+
+    async def activity(self, client):
+        return json.loads(await self.request(client, "activity"))
 
     async def status(self, client):
         data = json.loads(await self.request(client, "status"))
@@ -220,6 +223,9 @@ class ESPHomeChannel:
         if image and status["hash"] != hashlib.sha256(image).hexdigest():
             raise ReflexError("ESPHome board did not commit the expected rule hash")
         return status
+
+    async def activity(self, client):
+        return await self.exchange()
 
     async def status(self, client):
         return await self.exchange()

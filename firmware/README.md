@@ -185,8 +185,8 @@ standard Actions cluster (`0x0025`) on endpoint 1. The board advertises
 If one renewal is lost, the following slot is eight seconds after the last
 successful slot, leaving about two seconds for delivery before expiry. Each accepted invocation
 from a CASE administrator on the owner fabric extends the local deadline to
-ten seconds after receipt. Expiry enables local rules and the next renewal
-returns the board to standby. The integration omits the optional InvokeID.
+ten seconds after receipt. Expiry enables local fallback rules and the next renewal
+returns those rules to standby. Direct rules remain eligible in both states. The integration omits the optional InvokeID.
 Renewals neither start a reportable countdown nor emit a per-renewal event.
 
 When upgrading from integration 0.3.x, install the firmware first. The
@@ -214,6 +214,10 @@ minutes, falling back to the authenticated Thread channel when configured.
 A failed status check retries after one minute. The status display can lag on
 these controllers; USB provides a current reading during an outage. Status
 reads and subscription reports do not renew the lease.
+
+The high bit of the operation byte in a rule selects direct ESP handling. Existing fallback images are byte-for-byte unchanged. Receivers predating direct rules reject the flagged operation. Direct rules share the existing peer subscriptions and ignore the HA lease once the fabric identity and source subscription are established. Priming reports are discarded in both modes.
+
+Attributes 5–8 return four pages of the current direct execution journal. The authenticated HTTP channel exposes the same data at `/v1/activity`; the encrypted ESPHome exchange includes it as `journal`. Each result consists of 16 hex digits of ESP run ID, eight of rule ID, and four of command status. Results for the same source event share a run ID. HA verifies the image hash and maps rule IDs to automation entities and targets. The journal retains the last 32 direct target results.
 
 Endpoint 1 hosts the rules cluster and its vendor-specific `RuleExecuted`
 event. Fields 0 through 3 contain the rule ID, local node ID, source event

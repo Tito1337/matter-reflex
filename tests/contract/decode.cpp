@@ -17,6 +17,7 @@ int main() {
         const auto &r = rules.rows[i];
         assert(reflex::matches(r, 0x123456789ABCDEF0ULL, 2, 6, 2));
         assert(r.target_ep == 1 && r.target >= 40 && r.target <= 43);
+        assert(r.direct == (r.target == 41));
         seen[r.target - 40] = true;
         reflex::Command command{};
         assert(reflex::resolve(r, {1, 200}, command));

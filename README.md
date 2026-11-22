@@ -1,6 +1,6 @@
 # Matter Reflex
 
-Keep a Matter button working when Home Assistant or its Matter Server goes offline. Matter Reflex pairs a Home Assistant integration with a **Seeed Studio XIAO ESP32-C6** on your Thread network. Add the `reflex` label to a supported automation and the board stores its rules. If Home Assistant stops renewing a ten-second lease, the board can send commands directly to your lights, plugs and shades.
+Choose who handles a Matter button press, even when Home Assistant is online. Matter Reflex pairs a Home Assistant integration with a **Seeed Studio XIAO ESP32-C6** on your Thread network. With a **direct reflex**, the ESP handles the automation locally. With a **fallback reflex**, Home Assistant normally handles it and the ESP takes over during an outage.
 
 [Install on a XIAO](examples/README.md) · [Extend your ESPHome node](docs/esphome-component.md) · [Home Assistant quick start](docs/quickstart.en.md) · [Troubleshooting](docs/troubleshooting.md) · [Contributing](CONTRIBUTING.md)
 
@@ -27,6 +27,23 @@ mode: single
 
 After installing Reflex, enable the automation and give it the **reflex** label. Check **Synchronized** to confirm that the board received the accepted rules. Then check **Settings → System → Repairs** to see whether Reflex excluded any automations.
 
+## Direct and fallback reflexes
+
+| Reflex mode | Normal handler | Degraded handler |
+| --- | --- | --- |
+| **Direct reflex** | ESP | Home Assistant |
+| **Fallback reflex** | Home Assistant | ESP |
+
+Think of Home Assistant as the brain. A direct reflex follows a *spinal* pathway: the ESP responds to the button without consulting HA. A fallback reflex normally follows a *cortical* pathway through HA, with the ESP ready to take over.
+
+In the HA automation editor, open **And if → Add condition**, search for **Reflex mode**, select the configured ESP and choose the mode. Keep this condition enabled at the top level. Save the automation and check **Synchronized** and **Repairs** before using the new policy. To test routing, use the physical trigger. HA’s **Run actions** deliberately executes the actions on HA and bypasses conditions. Existing automations labeled **reflex** continue to use fallback mode. An explicit Reflex condition selects its own ESP and takes precedence over that label. Ordinary HA automations need no setup.
+
+For independent assignments, choose **Reflex handlers (advanced)** in place of **Reflex mode**. Both **Normal handler** and **Degraded handler** offer **Home Assistant**, **ESP**, and **None**. A normal handler continues to run even if its backup disappears. A degraded-only handler runs on the next matching trigger after it loses contact with the other controller. For a complex HA routine with a simpler outage version, keep the HA automation as usual and give a second automation the same trigger, **None** as normal handler, and **ESP** as degraded handler.
+
+Upgrade the integration and ESP firmware together before enabling direct mode. Old firmware rejects an image containing a direct rule and retains its last accepted image. When using the remote ESPHome package before a release, set its external component source to the revision containing these changes. Edits and disabling take effect on the ESP after its next successful synchronization.
+
+**Activity.** For a direct reflex, the ESP acts immediately and records the outcome of each target command. HA groups these results into one Activity entry on the automation, including command rejections and transport errors. Activity records when HA received the results. The ESP keeps the most recent 32 direct target results in RAM for catch-up, scoped to the current rule image and Matter fabric. A restart, replacement of the image, or a full journal can leave gaps. HA's native traces and Last triggered describe HA executions.
+
 ## Supported actions
 
 Use a Matter button event (`event.received`) as the trigger. Specify each target by entity ID. The button, board and targets must belong to the same Matter fabric, the trust domain where Home Assistant commissioned them.
@@ -37,7 +54,7 @@ Use a Matter button event (`event.received`) as the trigger. Specify each target
 | Smart plug | `switch.turn_on`, `switch.turn_off`, `switch.toggle` on the plug's power outlet. |
 | Shade | `cover.open_cover`, `cover.close_cover`, `cover.stop_cover`, `cover.set_cover_position`, depending on the commands the device advertises. Home Assistant measures position from 0 (closed) to 100 (open). |
 
-The board stores up to **32 gesture–target pairs**. A gesture that controls three devices uses three entries. A toggle requires the board to have received the target's on/off state. Conditions, delays, area targets, `choose` branches, `parallel` blocks, colors and transitions require Home Assistant. To run two independent actions on a long press, you can give two automations the same trigger.
+The board stores up to **32 gesture–target pairs**. A gesture that controls three devices uses three entries. A toggle requires the board to have received the target's on/off state. Conditions other than the Reflex handler selection, delays, area targets, `choose` branches, `parallel` blocks, colors and transitions require Home Assistant. To run two independent actions on a long press, you can give two automations the same trigger.
 
 ## Installation
 
@@ -48,13 +65,13 @@ The board stores up to **32 gesture–target pairs**. A gesture that controls th
 
 ## How failover works
 
-- **While Home Assistant is available**, it schedules a lease renewal every four seconds on a monotonic clock by invoking **Renew Reflex lease**, a named action on the XIAO (firmware 1.3.0, integration 0.5.1 or newer). The standard Matter `InstantAction` command renews a ten-second deadline held on the board. The XIAO stays subscribed to button events and ignores presses while the lease is valid.
-- **When the lease expires**, the XIAO uses its Matter sessions to send commands directly to the targets. The next lease renewal returns it to standby. The **Executions** counter includes failed commands. Each `RuleExecuted` event carries the individual result.
+- **While Home Assistant is available**, it schedules a lease renewal every four seconds on a monotonic clock by invoking **Renew Reflex lease**, a named action on the XIAO (firmware 1.3.0, integration 0.5.1 or newer). The standard Matter `InstantAction` command renews a ten-second deadline held on the board. The ESP stays subscribed to button events. It handles direct rules on every matching press and fallback rules after the lease expires. Each successful renewal response also tells HA the ESP is reachable. HA takes over direct rules after ten seconds without confirmation, with the same initial quiet period on startup.
+- **When the lease expires**, the XIAO uses its Matter sessions to send commands directly to the targets. The next lease renewal returns fallback rules to standby. The Active indicator shows fallback takeover. The **Executions** counter includes failed commands. Each `RuleExecuted` event carries the individual result.
 - **When rules change**, Home Assistant compiles them, grants access to the required endpoints and verifies the fingerprint of the rule table saved in the board's nonvolatile memory. Home Assistant transfers the rules through development cluster `0xFFF1FC00` on endpoint 1. When Matter Server lacks that cluster, the integration can use the encrypted ESPHome API or authenticated HTTP over Thread IPv6 on port 5581. The board sends commands to the devices over Matter in either case. Avoid editing an endpoint's access control list during synchronization.
 
 Home Assistant listens for status changes through Matter Server’s existing subscription. It reads the board on connection and during rule synchronization. If the server exposes only some or none of the status changes, a five-minute check bounds how stale the display can become while the board is reachable. [Firmware and traffic details](firmware/README.md#lease-and-rule-execution)
 
-The lease measures whether Home Assistant can reach the XIAO. If an individual automation fails while Home Assistant continues renewing the lease, Home Assistant still handles that automation. A press during the interval between an outage and lease expiry can be lost. During recovery, both controllers may see the same press, so a command can execute twice.
+The lease measures whether Home Assistant can reach the XIAO. Reachability selects the backup. An individual action failure leaves the normal handler in charge. A press during the interval between an outage and lease expiry can be lost. During an asymmetric network failure or recovery, both controllers may see the same press and reach its target. A command can execute twice in either mode. A missing execution report never triggers a retry.
 
 ## Hardware tests
 

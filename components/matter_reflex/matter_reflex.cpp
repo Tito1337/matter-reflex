@@ -70,6 +70,13 @@ void ReflexComponent::api_exchange(StringRef fabric, StringRef node, StringRef i
   reply["hash"] = std::string(reflex_runtime::rules_hash());
   reply["active"] = reflex_runtime::active();
   reply["executions"] = reflex_runtime::executions();
+  std::string journal;
+  char page[reflex_runtime::kJournalPageChars + 1];
+  for (size_t i = 0; i < reflex_runtime::kJournalPages; ++i) {
+    reflex_runtime::journal_page(i, page);
+    journal.append(page);
+  }
+  reply["journal"] = journal;
 }
 #endif
 

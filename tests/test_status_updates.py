@@ -66,6 +66,7 @@ def setup(channel=None):
         client=Mock(return_value=client),
         channel=channel,
         native_status_readable=True,
+        activity=SimpleNamespace(wake=asyncio.Event()),
         notify=Mock(),
         dirty=asyncio.Event(),
         read_status=AsyncMock(return_value=snapshot()),
