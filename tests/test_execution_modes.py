@@ -9,7 +9,7 @@ import pytest
 from homeassistant import loader
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import CoreState, HomeAssistant
-from homeassistant.helpers import condition
+from homeassistant.helpers import condition, entity_registry, label_registry
 from homeassistant.helpers.condition import ConditionConfig
 
 from custom_components.matter_reflex import runtime as runtime_module
@@ -68,6 +68,22 @@ async def test_ha_checks_ownership_at_trigger_time(
         state=CoreState.running,
         config_entries=SimpleNamespace(async_get_entry=lambda _: entry),
     )
+    reg = SimpleNamespace(labels={"label-123"})
+    monkeypatch.setattr(
+        entity_registry,
+        "async_get",
+        lambda _: SimpleNamespace(async_get={"automation.test": reg}.get),
+    )
+    monkeypatch.setattr(
+        label_registry,
+        "async_get",
+        lambda _: SimpleNamespace(
+            async_get_label_by_name={
+                "reflex": SimpleNamespace(label_id="label-123")
+            }.get
+        ),
+    )
+    variables = {"this": {"entity_id": "automation.test"}}
     options = {
         "esp": "esp-entry",
         "normal_handler": normal,
@@ -77,11 +93,15 @@ async def test_ha_checks_ownership_at_trigger_time(
     await gate.async_setup()
     try:
         monkeypatch.setattr(runtime_module, "monotonic", lambda: 9.99)
-        assert gate.async_check() is healthy
+        assert gate.async_check(variables=variables) is healthy
         monkeypatch.setattr(runtime_module, "monotonic", lambda: 10)
-        assert gate.async_check() is expired
+        assert gate.async_check(variables=variables) is expired
         rt.esp_deadline = 20
-        assert gate.async_check() is healthy
+        assert gate.async_check(variables=variables) is healthy
+        reg.labels.clear()
+        assert gate.async_check(variables=variables)
+        reg.labels.add("label-123")
+        assert gate.async_check(variables=variables) is healthy
     finally:
         gate.async_unload()
 

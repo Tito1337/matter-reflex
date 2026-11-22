@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from hashlib import sha256
 
-from .const import CLUSTER, ENDPOINT, VENDOR
+from .const import CLUSTER, ENDPOINT, REFLEX_LABEL, VENDOR
 from .policy import FALLBACK, configured_policy
 from .wire import Rule, encode
 
@@ -261,8 +261,9 @@ async def async_compile(
     )
 
     registry = er.async_get(hass)
-    labels = lr.async_get(hass)
-    label = labels.async_get_label_by_name("Fallback reflex")
+    label = lr.async_get(hass).async_get_label_by_name(REFLEX_LABEL)
+    if label is None:
+        return Compilation(encode([]), {}, {})
     entry = hass.config_entries.async_get_entry(matter_entry_id)
     if not entry or not entry.runtime_data:
         raise RuntimeError("Matter integration is unavailable")
@@ -384,27 +385,25 @@ async def async_compile(
         raise RuntimeError("HA automations have not finished loading")
     rules, issues, permissions, activity = [], {}, {}, {}
     for reg in sorted(registry.entities.values(), key=lambda ent: ent.entity_id):
-        if reg.domain != "automation" or reg.disabled_by:
+        if (
+            reg.domain != "automation"
+            or reg.disabled_by
+            or label.label_id not in reg.labels
+        ):
             continue
         entity_id = reg.entity_id
         state = hass.states.get(entity_id)
         if state and state.state == "off":
             continue
-        tagged = label is not None and label.label_id in reg.labels
         automation = component.get_entity(entity_id)
         if not automation or not state or state.state != "on":
-            if tagged:
-                raise RuntimeError(f"Waiting for automation {entity_id}")
-            continue
+            raise RuntimeError(f"Waiting for automation {entity_id}")
         config = automation.raw_config
         if not config:
-            if tagged:
-                issues[entity_id] = "Automation configuration cannot be read"
+            issues[entity_id] = "Automation configuration cannot be read"
             continue
         try:
             explicit = configured_policy(config)
-            if explicit is None and not tagged:
-                continue
             handlers = FALLBACK
             if explicit is not None:
                 selected, handlers, remaining = explicit

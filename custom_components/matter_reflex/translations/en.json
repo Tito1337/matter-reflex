@@ -79,7 +79,7 @@
   "conditions": {
     "mode": {
       "name": "Reflex mode",
-      "description": "Choose who handles this automation.",
+      "description": "Choose who handles this automation. Requires the reflex label.",
       "fields": {
         "esp": {
           "name": "ESP"
@@ -91,7 +91,7 @@
     },
     "handlers": {
       "name": "Reflex handlers (advanced)",
-      "description": "Choose normal and degraded handlers independently.",
+      "description": "Choose normal and degraded handlers independently. Requires the reflex label.",
       "fields": {
         "esp": {
           "name": "ESP"

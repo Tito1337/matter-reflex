@@ -79,7 +79,7 @@
   "conditions": {
     "mode": {
       "name": "Mode réflexe",
-      "description": "Choisit qui exécute cette automatisation.",
+      "description": "Choisit qui exécute cette automatisation. Le libellé reflex est requis.",
       "fields": {
         "esp": {
           "name": "ESP"
@@ -91,7 +91,7 @@
     },
     "handlers": {
       "name": "Gestionnaires du réflexe (avancé)",
-      "description": "Choisissez les gestionnaires normal et dégradé.",
+      "description": "Choisissez les gestionnaires normal et dégradé. Le libellé reflex est requis.",
       "fields": {
         "esp": {
           "name": "ESP"

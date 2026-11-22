@@ -29,7 +29,7 @@ async def compile_plug(
     reflex_node=99,
     conditions=None,
     tagged=True,
-    label_name="Fallback reflex",
+    label_name="reflex",
     entry_id=None,
     product="GRILLPLATS",
     vendor=4476,
@@ -188,35 +188,35 @@ async def test_missing_command_report_does_not_compile_an_empty_image(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_renaming_existing_label_opts_assigned_automations_into_fallback(
-    monkeypatch,
-):
-    before = await compile_plug(monkeypatch, label_name="reflex")
-    after = await compile_plug(monkeypatch, label_name="Fallback reflex")
-    assert before.image == encode([]) and not before.permissions
-    assert (
-        ROW.unpack(after.image[8:])[7] == 2
-    )  # Fallback toggle, same assigned label ID.
+async def test_reflex_label_alone_selects_fallback(monkeypatch):
+    fallback = await compile_plug(monkeypatch)
+    other = await compile_plug(monkeypatch, label_name="Fallback reflex")
+    assert ROW.unpack(fallback.image[8:])[7] == 2
+    assert other.image == encode([]) and not other.permissions
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tagged", [True, False])
-async def test_direct_gate_replaces_label_and_selects_one_esp(monkeypatch, tagged):
+async def test_labeled_direct_condition_selects_one_esp(monkeypatch):
     gate = {
         "condition": "matter_reflex.mode",
         "options": {"mode": "direct", "esp": "board-a"},
     }
-    cfg = {"tagged": tagged, "conditions": [gate]}
+    cfg = {"conditions": [gate]}
     first = await compile_plug(monkeypatch, **cfg, entry_id="board-a")
     second = await compile_plug(monkeypatch, **cfg, entry_id="board-b")
     assert first.issues == second.issues == {}
     assert ROW.unpack(first.image[8:])[7] == 0x82
     assert next(iter(first.activity.values())).target == "switch.anything"
     assert second.image == encode([])
+    unlabeled = await compile_plug(monkeypatch, **cfg, tagged=False, entry_id="board-a")
+    assert (
+        unlabeled.image == encode([])
+        and not unlabeled.issues
+        and not unlabeled.permissions
+    )
     unsafe = await compile_plug(
         monkeypatch,
         entry_id="board-a",
-        tagged=False,
         conditions=[gate, {"condition": "template", "value_template": "false"}],
     )
     assert unsafe.image == encode([]) and "automation.socket" in unsafe.issues
@@ -233,8 +233,6 @@ async def test_nested_ownership_condition_reports_repair(monkeypatch):
             }
         ],
     }
-    result = await compile_plug(
-        monkeypatch, conditions=[nested], tagged=False, entry_id="board-a"
-    )
+    result = await compile_plug(monkeypatch, conditions=[nested], entry_id="board-a")
     assert result.image == encode([])
     assert "top level" in result.issues["automation.socket"]

@@ -245,7 +245,7 @@ async def test_cover_compile_checks_real_registry_and_acl(
         "async_get",
         lambda _: SimpleNamespace(
             async_get_label_by_name={
-                "Fallback reflex": SimpleNamespace(label_id="fallback_reflex")
+                "reflex": SimpleNamespace(label_id="fallback_reflex")
             }.get
         ),
     )

@@ -25,7 +25,7 @@ actions:
 mode: single
 ```
 
-After installing Reflex, enable the automation and give it the **Fallback reflex** label. Check **Synchronized** to confirm that the board received the accepted rules. Then check **Settings → System → Repairs** to see whether Reflex excluded any automations.
+After installing Reflex, enable the automation and give it the **reflex** label. Check **Synchronized** to confirm that the board received the accepted rules. Then check **Settings → System → Repairs** to see whether Reflex excluded any automations.
 
 ## Direct and fallback reflexes
 
@@ -36,11 +36,13 @@ After installing Reflex, enable the automation and give it the **Fallback reflex
 
 Think of Home Assistant as the brain. A direct reflex follows a *spinal* pathway: the ESP responds to the button without consulting HA. A fallback reflex normally follows a *cortical* pathway through HA, with the ESP ready to take over.
 
-In the HA automation editor, open **And if → Add condition**, search for **Reflex mode**, select the configured ESP and choose the mode. Keep this condition enabled at the top level. Save the automation and check **Synchronized** and **Repairs** before using the new policy. To test routing, use the physical trigger. HA’s **Run actions** deliberately executes the actions on HA and bypasses conditions. An explicit Reflex condition selects its own ESP and takes precedence over the **Fallback reflex** label. Ordinary HA automations need no setup.
+Give every automation managed by Matter Reflex the **reflex** label. With the label alone, a supported automation runs in Home Assistant and the ESP takes over during an outage (**Fallback reflex**).
 
-**Upgrading from the old label.** Rename the existing **reflex** label to **Fallback reflex** in Home Assistant. Renaming it keeps its automation assignments. If you leave the old name in place, the next successful sync removes its label-only rules from the ESP. Check **Synchronized** after the rename.
+For **Direct reflex**, keep the label and add an enabled, top-level **Reflex mode** condition under **And if**. Select the ESP and choose **Direct reflex**. You can also select **Fallback reflex** explicitly to choose a particular ESP. On an unlabeled automation the Reflex condition lets HA proceed, and the compiler skips the automation. Other HA conditions still apply.
 
-For independent assignments, choose **Reflex handlers (advanced)** in place of **Reflex mode**. Both **Normal handler** and **Degraded handler** offer **Home Assistant**, **ESP**, and **None**. A normal handler continues to run even if its backup disappears. A degraded-only handler runs on the next matching trigger after it loses contact with the other controller. For a complex HA routine with a simpler outage version, keep the HA automation as usual and give a second automation the same trigger, **None** as normal handler, and **ESP** as degraded handler.
+Save and check **Synchronized** and **Repairs** after changing a label or mode. Removing the label returns automatic handling to HA and removes the ESP rules on the next successful sync. Test with the physical trigger. HA’s **Run actions** executes the actions on HA and bypasses conditions.
+
+For independent assignments, keep the **reflex** label and choose **Reflex handlers (advanced)** in place of **Reflex mode**. Both **Normal handler** and **Degraded handler** offer **Home Assistant**, **ESP**, and **None**. A normal handler continues to run even if its backup disappears. A degraded-only handler runs on the next matching trigger after it loses contact with the other controller. For a complex HA routine with a simpler outage version, keep the HA automation as usual and give a second automation the same trigger, **None** as normal handler, and **ESP** as degraded handler.
 
 Upgrade the integration and ESP firmware together before enabling direct mode. Old firmware rejects an image containing a direct rule and retains its last accepted image. When using the remote ESPHome package before a release, set its external component source to the revision containing these changes. Edits and disabling take effect on the ESP after its next successful synchronization.
 

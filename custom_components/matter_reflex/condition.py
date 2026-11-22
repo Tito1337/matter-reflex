@@ -4,9 +4,11 @@ from typing import ClassVar
 
 import probatio
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import label_registry as lr
 from homeassistant.helpers.condition import Condition
 
-from .const import DOMAIN
+from .const import DOMAIN, REFLEX_LABEL
 from .policy import ADVANCED_CONDITION, HANDLERS, MODE_CONDITION, MODES, handlers_for
 
 
@@ -38,8 +40,18 @@ class ReflexMode(Condition):
         self.entry_id = config.options["esp"]
         self.handlers = handlers_for(self.kind, config.options)
 
-    def _async_check(self, **kwargs):
+    def _async_check(self, *, variables=None, **kwargs):
         if self.handlers.normal == "ha":
+            return True
+        # HA passes the triggering automation's state dictionary as "this".
+        # Label membership can change without reloading the automation.
+        this = (variables or {}).get("this")
+        entity_id = this.get("entity_id") if isinstance(this, dict) else None
+        if not isinstance(entity_id, str) or not entity_id.startswith("automation."):
+            return True
+        reg = er.async_get(self._hass).async_get(entity_id)
+        label = lr.async_get(self._hass).async_get_label_by_name(REFLEX_LABEL)
+        if not reg or label is None or label.label_id not in reg.labels:
             return True
         if self.handlers.degraded != "ha":
             return False

@@ -11,7 +11,7 @@ Keep a Matter button working when Home Assistant or its Matter Server goes offli
 
 1. Build, provision and commission the board using the [ESPHome XIAO installation guide](../examples/README.md).
 2. Copy [the integration](../custom_components/matter_reflex) to `config/custom_components/matter_reflex`, check the HA configuration and restart Core. Under **Settings → Devices & services**, add **Matter Reflex** and select the board.
-3. Use the [double-press example](../README.md#your-first-automation) with your own event and light entity IDs. Apply the **Fallback reflex** label to the enabled automation.
+3. Use the [double-press example](../README.md#your-first-automation) with your own event and light entity IDs. Apply the **reflex** label to the enabled automation.
 4. For ESP-first operation, add the **Reflex mode** condition to the automation, choose the ESP and **Direct reflex**, and save. Check the automation’s Activity for reported ESP runs. [Modes and advanced handlers](../README.md#direct-and-fallback-reflexes)
 5. Check both the synchronization sensor and **Repairs**. The sensor confirms the accepted rule image reached the board. Repairs lists any automation excluded from that image.
 
