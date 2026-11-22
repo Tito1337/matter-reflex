@@ -29,6 +29,7 @@ async def compile_plug(
     reflex_node=99,
     conditions=None,
     tagged=True,
+    label_name="Fallback reflex",
     entry_id=None,
     product="GRILLPLATS",
     vendor=4476,
@@ -119,7 +120,7 @@ async def compile_plug(
         label_registry,
         "async_get",
         lambda _: SimpleNamespace(
-            async_get_label_by_name=lambda _: SimpleNamespace(label_id="reflex")
+            async_get_label_by_name={label_name: SimpleNamespace(label_id="reflex")}.get
         ),
     )
     return await async_compile(hass, "fabric", reflex_node, entry_id)
@@ -184,6 +185,18 @@ async def test_unrelated_outlet_with_incomplete_basic_information(monkeypatch):
 async def test_missing_command_report_does_not_compile_an_empty_image(monkeypatch):
     with pytest.raises(RuntimeError, match="Waiting for the Matter commands"):
         await compile_plug(monkeypatch, commands=None)
+
+
+@pytest.mark.asyncio
+async def test_renaming_existing_label_opts_assigned_automations_into_fallback(
+    monkeypatch,
+):
+    before = await compile_plug(monkeypatch, label_name="reflex")
+    after = await compile_plug(monkeypatch, label_name="Fallback reflex")
+    assert before.image == encode([]) and not before.permissions
+    assert (
+        ROW.unpack(after.image[8:])[7] == 2
+    )  # Fallback toggle, same assigned label ID.
 
 
 @pytest.mark.asyncio

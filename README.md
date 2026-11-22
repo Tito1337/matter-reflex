@@ -25,7 +25,7 @@ actions:
 mode: single
 ```
 
-After installing Reflex, enable the automation and give it the **reflex** label. Check **Synchronized** to confirm that the board received the accepted rules. Then check **Settings → System → Repairs** to see whether Reflex excluded any automations.
+After installing Reflex, enable the automation and give it the **Fallback reflex** label. Check **Synchronized** to confirm that the board received the accepted rules. Then check **Settings → System → Repairs** to see whether Reflex excluded any automations.
 
 ## Direct and fallback reflexes
 
@@ -36,7 +36,9 @@ After installing Reflex, enable the automation and give it the **reflex** label.
 
 Think of Home Assistant as the brain. A direct reflex follows a *spinal* pathway: the ESP responds to the button without consulting HA. A fallback reflex normally follows a *cortical* pathway through HA, with the ESP ready to take over.
 
-In the HA automation editor, open **And if → Add condition**, search for **Reflex mode**, select the configured ESP and choose the mode. Keep this condition enabled at the top level. Save the automation and check **Synchronized** and **Repairs** before using the new policy. To test routing, use the physical trigger. HA’s **Run actions** deliberately executes the actions on HA and bypasses conditions. Existing automations labeled **reflex** continue to use fallback mode. An explicit Reflex condition selects its own ESP and takes precedence over that label. Ordinary HA automations need no setup.
+In the HA automation editor, open **And if → Add condition**, search for **Reflex mode**, select the configured ESP and choose the mode. Keep this condition enabled at the top level. Save the automation and check **Synchronized** and **Repairs** before using the new policy. To test routing, use the physical trigger. HA’s **Run actions** deliberately executes the actions on HA and bypasses conditions. An explicit Reflex condition selects its own ESP and takes precedence over the **Fallback reflex** label. Ordinary HA automations need no setup.
+
+**Upgrading from the old label.** Rename the existing **reflex** label to **Fallback reflex** in Home Assistant. Renaming it keeps its automation assignments. If you leave the old name in place, the next successful sync removes its label-only rules from the ESP. Check **Synchronized** after the rename.
 
 For independent assignments, choose **Reflex handlers (advanced)** in place of **Reflex mode**. Both **Normal handler** and **Degraded handler** offer **Home Assistant**, **ESP**, and **None**. A normal handler continues to run even if its backup disappears. A degraded-only handler runs on the next matching trigger after it loses contact with the other controller. For a complex HA routine with a simpler outage version, keep the HA automation as usual and give a second automation the same trigger, **None** as normal handler, and **ESP** as degraded handler.
 

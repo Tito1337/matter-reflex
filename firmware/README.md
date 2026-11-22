@@ -99,7 +99,7 @@ write access after reconnecting the board, restore the device permissions using
 your Linux distribution's usual method.
 
 If you have used shade rules and want to downgrade from firmware 1.1 to 1.0,
-remove the `reflex` label from those automations and wait for Home Assistant to
+remove their ESP fallback label and wait for Home Assistant to
 confirm synchronization before flashing. Firmware 1.0 can load only a rule
 image that contains light rules exclusively.
 

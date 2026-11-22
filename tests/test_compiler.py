@@ -188,7 +188,7 @@ async def test_cover_compile_checks_real_registry_and_acl(
             platform="matter",
             config_entry_id="fabric",
             disabled_by=None,
-            labels={"reflex"},
+            labels={"fallback_reflex"},
             supported_features=features,
             capabilities={"event_types": ["multi_press_2"]},
         )
@@ -244,7 +244,9 @@ async def test_cover_compile_checks_real_registry_and_acl(
         label_registry,
         "async_get",
         lambda _: SimpleNamespace(
-            async_get_label_by_name=lambda _: SimpleNamespace(label_id="reflex")
+            async_get_label_by_name={
+                "Fallback reflex": SimpleNamespace(label_id="fallback_reflex")
+            }.get
         ),
     )
     result = await async_compile(hass, "fabric")

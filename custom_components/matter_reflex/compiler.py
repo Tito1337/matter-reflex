@@ -262,7 +262,7 @@ async def async_compile(
 
     registry = er.async_get(hass)
     labels = lr.async_get(hass)
-    label = labels.async_get_label_by_name("reflex")
+    label = labels.async_get_label_by_name("Fallback reflex")
     entry = hass.config_entries.async_get_entry(matter_entry_id)
     if not entry or not entry.runtime_data:
         raise RuntimeError("Matter integration is unavailable")
