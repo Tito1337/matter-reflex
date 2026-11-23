@@ -20,6 +20,7 @@ struct Rule {
 struct Rules { Rule rows[kMaxRules]; size_t count; };
 struct State { int on, level; };  // -1 when unavailable
 enum CoverOperation : uint8_t { kCoverOpen = 6, kCoverClose, kCoverStop, kCoverPosition, kTiltPosition, kTiltOpen, kTiltClose, kTiltStop };
+constexpr uint8_t kNativeToggle = 14;  // Legacy opcode 2 computes On or Off locally.
 constexpr bool is_cover(uint8_t op) { return op >= kCoverOpen && op <= kTiltStop; }
 enum SensorEvent : uint8_t {
     kBooleanFalse = 7, kBooleanTrue, kUnoccupied, kOccupied,

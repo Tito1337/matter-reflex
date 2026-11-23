@@ -6,6 +6,20 @@ import lab
 import pytest
 
 
+def test_cold_boot_milestones_count_route_warnings_and_distinct_peers():
+    from c6 import boot_milestones
+
+    lines = [
+        b"I(157) chip: Returned from app_main()",
+        b"W (201) OPENTHREAD: Failed to find valid route for: peer",
+        b"I (310) chip: Msg RX from 1:1 [X] (IM:SubscribeResponse)",
+        b"I (320) chip: Msg RX from 1:1 [X] (IM:SubscribeResponse)",
+    ]
+    assert boot_milestones(lines) == {"app_main_return": 157, "route_drops": 1}
+    lines.append(b"I (450) chip: Msg RX from 1:2 [X] (IM:SubscribeResponse)")
+    assert boot_milestones(lines)["both_subscribe_responses"] == 450
+
+
 @pytest.mark.parametrize(
     "failure", ["extra", "wrong_sender", "wrong_tilt", "late_duplicate"]
 )

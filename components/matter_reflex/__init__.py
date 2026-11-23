@@ -96,7 +96,7 @@ async def to_code(config):
     CORE.add_job(enable_reflex_clusters)
     add_idf_sdkconfig_option("CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER", True)
     add_idf_sdkconfig_option("CONFIG_CHIP_TASK_STACK_SIZE", 12288)
-    cg.add_cmake_arg("PROJECT_VER_NUMBER", "5")
+    cg.add_cmake_arg("PROJECT_VER_NUMBER", "6")
     add_src_cmake(
         'target_link_options(${COMPONENT_LIB} PUBLIC '
         '"-Wl,--wrap=_ZN4chip18CASESessionManager4InitEPNS_6System5LayerERKNS_24CASESessionManagerConfigE")'

@@ -32,9 +32,21 @@ export async function addTargets(node) {
         if (address) commands.push({ sender: String(address.nodeId), command, value });
     }
     class Lamp extends OnOffServer.with("Lighting") {
+        #insideToggle = false;
+        toggle() {
+            record(this.context, "toggle");
+            // Matter.js implements toggle by calling this.on() or this.off().
+            this.#insideToggle = true;
+            try { return super.toggle(); }
+            finally { this.#insideToggle = false; }
+        }
         on() {
-            record(this.context, "on");
+            if (!this.#insideToggle) record(this.context, "on");
             return super.on();
+        }
+        off() {
+            if (!this.#insideToggle) record(this.context, "off");
+            return super.off();
         }
     }
     class Blind extends WindowCoveringServer.with("Tilt", "PositionAwareTilt") {

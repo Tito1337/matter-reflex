@@ -122,7 +122,7 @@ Specify each target by HA entity ID.
 | Smart plug | `switch.turn_on`, `switch.turn_off`, `switch.toggle` on the plug’s primary On/Off outlet, including generic Matter outlets exposed by HA. |
 | Shade | `cover.open_cover`, `cover.close_cover`, `cover.stop_cover`, `cover.set_cover_position`, depending on the commands the device advertises. For tilt, use `cover.set_cover_tilt_position` with `tilt_position`, or `cover.open_cover_tilt`, `cover.close_cover_tilt` and `cover.stop_cover_tilt` where HA exposes them. Home Assistant measures position from 0 (closed) to 100 (open). |
 
-The board stores up to **32 trigger–target pairs**. A trigger that controls three devices uses three entries. A toggle requires the board to have received the target's on/off state. Conditions other than the Reflex handler selection, delays, area targets, `choose` branches, `parallel` blocks, colors and delayed triggers (`for`) require Home Assistant. To run two independent actions on a long press, you can give two automations the same trigger.
+The board stores up to **32 trigger–target pairs**. A trigger that controls three devices uses three entries. On supported lights and plugs, Reflex sends a native Matter Toggle for each matching gesture. A direct button can toggle as soon as its fresh event reaches the board and the target has an active secure session. For targets that advertise only On and Off, Reflex chooses the command from the last reported power state. Conditions other than the Reflex handler selection, delays, area targets, `choose` branches, `parallel` blocks, colors and delayed triggers (`for`) require Home Assistant. To run two independent actions on a long press, you can give two automations the same trigger.
 
 ## Installation
 

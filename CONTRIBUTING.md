@@ -49,7 +49,7 @@ podman --cgroup-manager=cgroupfs build -f tools/Containerfile.ha -t localhost/ma
 ./dev ha ruff check custom_components/matter_reflex tests tools/board_console.py
 ```
 
-Run the contract test in Bash to check that the two components agree. The first command in the pipeline uses the integration’s Python compiler to compile the README example and three additional actions. The second runs the C++ engine on your development machine to decode and execute those rules. The test covers a 64-bit Matter identifier, a negative brightness step, a shade set to 75%, and a toggle based on the target’s observed state.
+Run the contract test in Bash to check that the two components agree. The first command in the pipeline uses the integration’s Python compiler to compile the README example and three additional actions. The second runs the C++ engine on your development machine to decode and execute those rules. The test covers a 64-bit Matter identifier, a negative brightness step, a shade set to 75%, and a native toggle with unknown target state.
 
 ```bash
 set -o pipefail
@@ -83,7 +83,7 @@ For local builds and the hardware verification sequence see the [XIAO profiles](
 ## Adding a Matter target
 
 1. Record the device type, cluster, accepted commands, and capabilities of the Home Assistant entity. A single plug may expose both a switch for its power output and several configuration settings.
-2. Describe the expected behavior when the target’s state is known, unknown, or stale. For example, a toggle requires a recent on/off state.
+2. Describe the expected behavior when the target’s state is known, unknown, or stale. For example, a relative brightness step on a lit lamp requires a reported level.
 3. Test that the compiler accepts a supported configuration and rejects an unsupported automation in full. Check the required permissions on each endpoint and compatibility with existing rule images.
 4. If the rule format or behavior changes, extend the [contract test](tests/contract) and document what happens on upgrade. In the pull request, list the tests you ran on hardware and the versions you used.
 

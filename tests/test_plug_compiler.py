@@ -171,7 +171,7 @@ async def test_outlet_absolute_wire_and_onoff_only_acl(
         {"product": "Matter Reflex", "vendor": VENDOR},
         {"product": None, "reflex_node": 42},
         {"commands": ()},  # a reported empty list is an unsupported action
-        {"commands": (0, 2)},  # native Toggle alone cannot synthesize both absolutes
+        {"commands": (0,)},  # Off alone cannot implement a toggle
         {"has_onoff": False},
         {"service": "turn_on", "data": {"brightness": 12}},
     ],
@@ -183,6 +183,18 @@ async def test_non_power_or_unsupported_switch_is_excluded_with_repair(
     assert "automation.socket" in result.issues
     assert result.permissions == {}
     assert result.image == encode([])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "commands, expected",
+    [((0, 1, 2), 14), ((0, 2), 14), ((2,), 14), ((0, 1), 2)],
+)
+async def test_toggle_uses_target_commands(monkeypatch, commands, expected):
+    result = await compile_plug(monkeypatch, commands=commands)
+    assert result.issues == {}
+    assert ROW.unpack_from(result.image, 8)[7] == expected
+    assert result.permissions[42] == {(1, 6, 3)}
 
 
 @pytest.mark.asyncio

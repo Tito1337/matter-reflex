@@ -110,6 +110,7 @@ def configure_ha(server_address):
             sensors=True,
             mode=commissioning.get("mode", "fallback"),
             reflex_entry_id=entry_id,
+            toggle=commissioning.get("toggle", False),
         )
     )
     # Only the disposable HA container reads this private file on its /config tmpfs.
@@ -212,7 +213,51 @@ def sensor_phase(sender, peer_call, settle=4):
     )
 
 
-def smoke(with_board=False, mode="fallback"):
+def measure_cold_boot(board, reflex, peer_call, restored, fallback):
+    from c6 import boot_milestones
+    from lab import eventually, subscriptions
+
+    previous = subscriptions(reflex, peer_call)
+    board.power_off()
+    trace = board.run / "board.log"
+    offset = trace.stat().st_size
+    peer_call("targets", "reset")
+    start = time.monotonic()
+    board.power_on()
+    eventually(
+        restored, "fresh ESP subscriptions on both peers", reflex, previous, timeout=180
+    )
+    subscribed_at = time.monotonic() - start
+    if fallback:
+        board.wait("fallback boot grace to expire", lambda state: state["active"])
+    if peer_call("targets", "snapshot")["commands"]:
+        raise RuntimeError("Unexpected replay before the first fresh press")
+    pressed_at = time.monotonic() - start
+    peer_call("button", "double")
+    expected = [{"command": "on", "sender": reflex}]
+
+    def received():
+        state = peer_call("targets", "snapshot")
+        if state["commands"] and state["commands"] != expected:
+            raise RuntimeError(f"Unexpected cold-boot command: {state}")
+        return state["commands"] == expected and state["on"]
+
+    eventually(received, "authenticated lamp On after reboot", timeout=20)
+    observed_at = time.monotonic() - start
+    board.wait(
+        "one successful execution on restarted ESP", lambda s: s["executions"] == 1
+    )
+    with trace.open("rb") as log:
+        log.seek(offset)
+        print("ESP boot (ms):", boot_milestones(log), flush=True)
+    print(
+        f"Cold boot: both subscriptions {subscribed_at:.3f}s, "
+        f"press {pressed_at:.3f}s, verified lamp On {observed_at:.3f}s.",
+        flush=True,
+    )
+
+
+def smoke(with_board=False, mode="fallback", cold_boots=0, toggle=False):
     from lab import (
         FIXTURES,
         PODMAN,
@@ -348,7 +393,12 @@ def smoke(with_board=False, mode="fallback"):
                 "127.0.0.1" if board else server_ip,
             ],
             input=json.dumps(
-                {"codes": codes, "key": board.key if board else None, "mode": mode}
+                {
+                    "codes": codes,
+                    "key": board.key if board else None,
+                    "mode": mode,
+                    "toggle": toggle,
+                }
             ),
             text=True,
             timeout=360,
@@ -439,6 +489,13 @@ def smoke(with_board=False, mode="fallback"):
                     )
 
             wait_ready()
+            if toggle:
+                from c6.toggle import verify_toggle_recovery
+
+                podman("kill", prefix + "server")
+                for _ in range(cold_boots or 1):
+                    verify_toggle_recovery(board, reflex, peer_call, prefix)
+                return
             verify()
         else:
             controller = phase(None, 4, peer_call=peer_call)
@@ -448,6 +505,10 @@ def smoke(with_board=False, mode="fallback"):
         if board:
             podman("kill", prefix + "server")
             verify("ha")
+            for _ in range(cold_boots):
+                measure_cold_boot(
+                    board, reflex, peer_call, restored, mode == "fallback"
+                )
             if (
                 podman("inspect", "--format", "{{.State.Running}}", prefix + "server")
                 != "false"

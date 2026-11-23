@@ -19,6 +19,7 @@ EVENTS = {
     "short_release": 3,
     "long_release": 4,
 }
+NATIVE_TOGGLE = 14
 ON_OFF_OPERATIONS = {
     "light.turn_off": 0,
     "light.turn_on": 1,
@@ -348,11 +349,13 @@ def compile_automation(
             if destination in destinations:
                 raise ValueError("Sequential actions on the same endpoint require HA")
             destinations.add(destination)
-            if domain == "switch" and op not in dst.plug_ops:
+            power_ops = dst.plug_ops if domain == "switch" else dst.light_power_ops
+            target_op = NATIVE_TOGGLE if op == 2 and NATIVE_TOGGLE in power_ops else op
+            if domain == "switch" and target_op not in dst.plug_ops:
                 raise ValueError(f"{name} does not support the requested plug action")
             if domain == "cover" and op not in dst.cover_ops:
                 raise ValueError(f"{name} does not support the requested cover action")
-            if domain == "light" and op <= 2 and op not in dst.light_power_ops:
+            if domain == "light" and op <= 2 and target_op not in dst.light_power_ops:
                 raise ValueError(
                     f"{name} does not support the requested light power action"
                 )
@@ -378,7 +381,7 @@ def compile_automation(
                         presses,
                         dst.node,
                         dst.ep,
-                        op,
+                        target_op,
                         value,
                         dst.minimum,
                         dst.maximum,
@@ -470,8 +473,10 @@ async def async_compile(
     def power_operations(endpoint, entity_id):
         commands = accepted_commands(endpoint, 6, entity_id)
         ops = {op for op in (0, 1) if op in commands}
-        if ops == {0, 1}:
-            ops.add(2)  # Toggle resolves to an absolute command using cached state.
+        if 2 in commands:
+            ops.add(NATIVE_TOGGLE)
+        elif ops == {0, 1}:
+            ops.add(2)  # Synthesize a toggle from reported state and the two absolute commands.
         return frozenset(ops)
 
     def lookup(entity_id):

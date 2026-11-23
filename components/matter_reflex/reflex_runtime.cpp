@@ -302,6 +302,14 @@ void update_active() {
         if (active_changed) active_changed(now);
     }
 }
+void thread_event(const DeviceLayer::ChipDeviceEvent *event, intptr_t) {
+    if (event->Type == DeviceLayer::DeviceEventType::kThreadStateChange &&
+        (event->ThreadStateChange.RoleChanged || event->ThreadStateChange.NetDataChanged)) {
+        select_fabric();
+        reflex_peers::tick();
+    }
+}
+
 void timer(System::Layer *layer, void *) {
     select_fabric();
     update_active();
@@ -428,6 +436,7 @@ void start(void (*on_active_changed)(bool), ResultListener on_result) {
     ESP_ERROR_CHECK(CommandHandlerInterfaceRegistry::Instance().RegisterCommandHandler(&lease_output) == CHIP_NO_ERROR ? ESP_OK : ESP_FAIL);
     boot_nonce = esp_random();
     initialized = true;
+    ESP_ERROR_CHECK(DeviceLayer::PlatformMgr().AddEventHandler(thread_event, 0) == CHIP_NO_ERROR ? ESP_OK : ESP_FAIL);
     timer(&DeviceLayer::SystemLayer(), nullptr);
 }
 

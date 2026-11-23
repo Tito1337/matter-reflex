@@ -1,0 +1,789 @@
+diff --git a/components/matter_reflex/reflex_peers.cpp b/components/matter_reflex/reflex_peers.cpp
+--- a/components/matter_reflex/reflex_peers.cpp
++++ b/components/matter_reflex/reflex_peers.cpp
+@@ -6,6 +6,7 @@
+ #include <app/CASESessionManager.h>
+ #include <app/InteractionModelEngine.h>
+ #include <app/ReadClient.h>
++#include "study.h"
+ #include <app/server/Server.h>
+ #include <clusters/LevelControl/Commands.h>
+ #include <clusters/OnOff/Commands.h>
+@@ -14,6 +15,9 @@
+ #include <clusters/WindowCovering/Commands.h>
+ #include <controller/InvokeInteraction.h>
+ #include <platform/ConnectivityManager.h>
++#include <platform/ThreadStackManager.h>
++#include <openthread/netdata.h>
++#include <openthread/thread.h>
+ #include <transport/SecureSession.h>
+ #include <esp_log.h>
+ #include <esp_timer.h>
+@@ -69,6 +73,7 @@
+ bool write_endpoint(size_t slot, const reflex::PeerRecord &record) {
+     char key[12];
+     slot_key(slot, key);
++    ESP_LOGI("study", "address commit slot=%u", unsigned(slot));
+     auto error = nvs_set_blob(peer_storage, key, &record, reflex::kPeerRecordSize);
+     if (error == ESP_OK) error = nvs_commit(peer_storage);
+     if (error != ESP_OK) ESP_LOGW("reflex", "Peer address cache write failed: %s", esp_err_to_name(error));
+@@ -131,6 +136,7 @@
+     static constexpr std::array<ClusterId, 4> sensor_clusters{0x45, 0x406, 0x402, 0x405};
+     SessionHolder session;
+     void restore_address() {
++        if (study_mode & 8) return;
+         if (const auto *endpoint = address_cache.lookup(node)) {
+             const uint8_t *bytes = endpoint->ip.data();
+             Inet::IPAddress ip;
+@@ -157,9 +163,18 @@
+     }
+     bool has_active_session() const { return session && session->IsActiveSession(); }
+     void maintain(bool attached) {
++        if (fallback_at && esp_timer_get_time() >= fallback_at) {
++            ESP_LOGI("study","restore window expired");
++            fallback_at = 0;
++            disconnect();
++        }
+         // CASE can become defunct while the subscription still awaits a report.
+         if (reader && !has_active_session()) disconnect();
+         if (!attached || reader || connecting || esp_timer_get_time() < retry_at) return;
++        // A returning Thread router can attach before it receives Network Data.
++        // Its mesh-local peers are already reachable. For other saved addresses,
++        // give the NetData event one maintenance interval to arrive before Sigma1.
++        if (!initial_route_ready()) return;
+         connecting = true;
+         attempts.start(cached_address.HasValue() && server_case_params.sessionManager, [this] { connect_direct(); }, [this] {
+             Server::GetInstance().GetCASESessionManager()->FindOrEstablishSession(
+@@ -210,7 +225,20 @@
+         }
+     }
+     void OnEventData(const EventHeader &, TLV::TLVReader *, const StatusIB *) override;
+-    void OnSubscriptionEstablished(SubscriptionId) override {
++    void OnSubscriptionEstablished(SubscriptionId id) override {
++        ESP_LOGI("study","sub node=%llu id=%lu", (unsigned long long)node, (unsigned long)id);
++        if (buttons) {
++            ButtonRecord record{};
++            record.fabric = reflex_runtime::fabric_id();
++            record.owner = reflex_runtime::self_node();
++            record.peer = node;
++            record.id = id;
++            ESP_ERROR_CHECK(reader->GetReportingIntervals(record.min,record.max) == CHIP_NO_ERROR ? ESP_OK : ESP_FAIL);
++            snprintf(record.hash,sizeof(record.hash),"%s",reflex_runtime::rules_hash());
++            for (size_t i=0;i<rule_set->count;i++)
++                if (button_path_ready[i]) record.ready |= uint32_t(1)<<i;
++            study_save(record);
++        }
+         established = true;
+         attempts.confirmed();
+         remember_report_address();
+@@ -226,7 +254,29 @@
+     reflex::PeerConnectionAttempts attempts;
+     std::unique_ptr<CASEClient, ReleaseCASEClient> direct_client;
+     int64_t retry_at = 0;
++    bool tried_restore = false;
++    bool target_delayed = false;
++    int64_t fallback_at = 0;
++    unsigned actions = 0;
+     unsigned backoff = 1;
++    int64_t network_data_deadline = 0;
++    bool initial_route_ready() {
++        const auto *endpoint = address_cache.lookup(node);
++        if (retry_at || !endpoint) return true;
++        const auto now = esp_timer_get_time();
++        if (!network_data_deadline) network_data_deadline = now + kSecond / 2;
++        if (now >= network_data_deadline) return true;
++
++        auto &thread = DeviceLayer::ThreadStackMgrImpl();
++        thread.LockThreadStack();
++        auto *ot = thread.OTInstance();
++        const bool ready = ot && (otNetDataGetLength(ot) ||
++            std::equal(endpoint->ip.begin(), endpoint->ip.begin() + OT_MESH_LOCAL_PREFIX_SIZE,
++                       otThreadGetMeshLocalPrefix(ot)->m8));
++        thread.UnlockThreadStack();
++        return ready;
++    }
++
+     void disconnect() {
+         reader.reset();
+         session.Release();
+@@ -295,6 +345,36 @@
+         p.reader.reset(new (std::nothrow) ReadClient(InteractionModelEngine::GetInstance(), &mgr, p,
+                                                     ReadClient::InteractionType::Subscribe));
+         if (!p.reader || !p.session.Grab(handle)) { p.disconnect(); return; }
++        ESP_LOGI("study","case node=%llu", (unsigned long long)p.node);
++        if (p.buttons && !p.tried_restore) {
++            p.tried_restore = true;
++            ButtonRecord record{};
++            if (study_load(record) && record.peer == p.node && record.fabric == reflex_runtime::fabric_id() &&
++                record.owner == reflex_runtime::self_node() && strcmp(record.hash,reflex_runtime::rules_hash()) == 0) {
++                uint64_t committed = 0;
++                if (study_cursor(committed)) {
++                    ESP_LOGI("study","cursor loaded=%llu",(unsigned long long)committed);
++                    p.high_water.SetValue(committed);
++                }
++                if ((study_mode & 2) && p.reader->StudyResume(handle,record.id,record.min,record.max)==CHIP_NO_ERROR) {
++                    p.established = true;
++                    for (size_t i=0;i<rule_set->count;i++)
++                        if (rule_set->rows[i].source==p.node) button_path_ready[i]=(record.ready & (uint32_t(1)<<i))!=0;
++                    p.fallback_at = esp_timer_get_time() + 10*kSecond;
++                    ESP_LOGI("study","listening id=%lu",(unsigned long)record.id);
++                    return;
++                }
++            }
++        }
++        if (p.lamp && (study_mode & 32) && !p.target_delayed) {
++            p.target_delayed = true;
++            ESP_LOGI("study","target subscription held");
++            DeviceLayer::SystemLayer().StartTimer(System::Clock::Seconds16(6), [](System::Layer *, void *ctx) {
++                auto &peer=*static_cast<Peer *>(ctx);
++                if (auto h=peer.session.Get(); h.HasValue()) connected(ctx,Server::GetInstance().GetExchangeManager(),h.Value());
++            },ctx);
++            return;
++        }
+         EventPathParams events(kInvalidEndpointId, 0x3b, kInvalidEventId, true /* urgent */);
+         AttributePathParams attrs[4 + sensor_clusters.size()];
+         size_t attr_count = 0;
+@@ -381,7 +461,7 @@
+     const auto &rule = rule_set->rows[index];
+     auto *target = find(rule.target);
+     auto session = target ? target->session.Get() : Optional<SessionHandle>();
+-    if (!target || !target->established || !session.HasValue() || !session.Value()->IsActiveSession()) {
++    if (!target || (!target->established && !((study_mode & 4) && rule.direct && rule.op == 1)) || !session.HasValue() || !session.Value()->IsActiveSession()) {
+         reflex_runtime::command_result(rule.id, number, kNoSession, run);
+         return;
+     }
+@@ -463,12 +543,21 @@
+     }
+     const auto handling = reflex_runtime::handling();
+     if (handling == reflex_runtime::Handling::unavailable) return;
++    bool counted = false;
+     const uint64_t run = reflex_runtime::next_run();
+     for (size_t i = 0; i < rule_set->count; ++i) {
+         if ((handling == reflex_runtime::Handling::all || button_path_ready[i]) &&
+             rule_set->rows[i].handles(handling == reflex_runtime::Handling::all) &&
+-            reflex::matches(rule_set->rows[i], node, h.mPath.mEndpointId, h.mPath.mEventId, presses))
++            reflex::matches(rule_set->rows[i], node, h.mPath.mEndpointId, h.mPath.mEventId, presses)) {
++            if (!counted) {
++                counted = true;
++                ++actions;
++                ESP_LOGI("study","action event=%llu",(unsigned long long)h.mEventNumber);
++                if (!(study_mode & 16) || actions % 4 == 0) study_commit_cursor(h.mEventNumber);
++                if (fallback_at) { ESP_LOGI("study","old subscription delivered"); fallback_at=0; }
++            }
+             dispatch(i, h.mEventNumber, run);
++        }
+     }
+ }
+ } // namespace
+diff --git a/components/matter_reflex/reflex_runtime.cpp b/components/matter_reflex/reflex_runtime.cpp
+--- a/components/matter_reflex/reflex_runtime.cpp
++++ b/components/matter_reflex/reflex_runtime.cpp
+@@ -302,6 +302,14 @@
+         if (active_changed) active_changed(now);
+     }
+ }
++void thread_event(const DeviceLayer::ChipDeviceEvent *event, intptr_t) {
++    if (event->Type == DeviceLayer::DeviceEventType::kThreadStateChange &&
++        (event->ThreadStateChange.RoleChanged || event->ThreadStateChange.NetDataChanged)) {
++        select_fabric();
++        reflex_peers::tick();
++    }
++}
++
+ void timer(System::Layer *layer, void *) {
+     select_fabric();
+     update_active();
+@@ -428,6 +436,7 @@
+     ESP_ERROR_CHECK(CommandHandlerInterfaceRegistry::Instance().RegisterCommandHandler(&lease_output) == CHIP_NO_ERROR ? ESP_OK : ESP_FAIL);
+     boot_nonce = esp_random();
+     initialized = true;
++    ESP_ERROR_CHECK(DeviceLayer::PlatformMgr().AddEventHandler(thread_event, 0) == CHIP_NO_ERROR ? ESP_OK : ESP_FAIL);
+     timer(&DeviceLayer::SystemLayer(), nullptr);
+ }
+ 
+diff --git a/firmware/main/CMakeLists.txt b/firmware/main/CMakeLists.txt
+--- a/firmware/main/CMakeLists.txt
++++ b/firmware/main/CMakeLists.txt
+@@ -1,6 +1,6 @@
+ set(reflex "../../components/matter_reflex")
+ idf_component_register(
+-    SRCS "app_main.cpp" "${reflex}/reflex_engine.cpp" "${reflex}/reflex_http.cpp"
++    SRCS "app_main.cpp" "study.cpp" "${reflex}/reflex_engine.cpp" "${reflex}/reflex_http.cpp"
+          "${reflex}/reflex_peers.cpp" "${reflex}/reflex_runtime.cpp"
+     INCLUDE_DIRS "." "${reflex}"
+     PRIV_REQUIRES esp_matter chip openthread esp_http_server esp_timer
+@@ -8,3 +8,5 @@
+ target_compile_definitions(${COMPONENT_LIB} PRIVATE CHIP_HAVE_CONFIG_H)
+ target_link_options(${COMPONENT_LIB} PUBLIC
+     "-Wl,--wrap=_ZN4chip18CASESessionManager4InitEPNS_6System5LayerERKNS_24CASESessionManagerConfigE")
++
++target_link_options(${COMPONENT_LIB} PUBLIC "-Wl,--wrap=otPlatSettingsGet" "-Wl,--wrap=esp_partition_write" "-Wl,--wrap=esp_partition_erase_range")
+diff --git a/firmware/main/app_main.cpp b/firmware/main/app_main.cpp
+--- a/firmware/main/app_main.cpp
++++ b/firmware/main/app_main.cpp
+@@ -1,3 +1,4 @@
++#include "study.h"
+ #include "reflex_runtime.h"
+ #include "reflex_http.h"
+ 
+@@ -74,6 +75,13 @@
+ void command(char *line) {
+     lock::ScopedChipStackLock lock(portMAX_DELAY);
+     bool ok = false;
++    if (!strncmp(line, "study ", 6)) {
++        int mode = atoi(line+6);
++        study_set(mode);
++        if (mode == 99) study_wear();
++        printf("STUDY next=%d\n", mode);
++        return;
++    }
+     if (!strncmp(line, "dataset ", 8)) ok = join(line+8);
+     else if (!strncmp(line, "key ", 4)) ok = reflex_http_set_key(line+4);
+     else if (!strcmp(line, "pair")) ok = pairing_window();
+@@ -117,6 +125,7 @@
+ 
+ extern "C" void app_main() {
+     ESP_ERROR_CHECK(nvs_flash_init());
++    study_init();
+     esp_matter::node::config_t cfg;
+     auto *node = esp_matter::node::create(&cfg, nullptr, identify);
+     ESP_ERROR_CHECK(node ? ESP_OK : ESP_ERR_NO_MEM);
+diff --git a/firmware/main/study.cpp b/firmware/main/study.cpp
+new file mode 100644
+--- /dev/null
++++ b/firmware/main/study.cpp
+@@ -0,0 +1,81 @@
++#include <initializer_list>
++#include "study.h"
++#include <nvs.h>
++#include <esp_log.h>
++#include <esp_partition.h>
++#include <freertos/FreeRTOS.h>
++#include <freertos/task.h>
++#include <openthread/platform/settings.h>
++#include <cstring>
++
++int study_mode;
++static nvs_handle_t store;
++static bool hid_role;
++static TaskHandle_t counted_task;
++static unsigned writes, erases;
++extern "C" otError __real_otPlatSettingsGet(otInstance *,uint16_t,int,uint8_t *,uint16_t *);
++extern "C" otError __wrap_otPlatSettingsGet(otInstance *ot,uint16_t key,int index,uint8_t *data,uint16_t *length) {
++    auto error=__real_otPlatSettingsGet(ot,key,index,data,length);
++    if (error==OT_ERROR_NONE && key==OT_SETTINGS_KEY_NETWORK_INFO && data && length && *length>=4 && !hid_role && (study_mode & 1)) {
++        // Pinned NetworkInfo: leave identity and anti-replay counters intact.
++        // Invalid short address exercises the SDK's normal full-attach path.
++        data[2]=data[3]=0xff;
++        hid_role=true;
++        ESP_LOGI("study","saved locator withheld");
++    }
++    return error;
++}
++extern "C" esp_err_t __real_esp_partition_write(const esp_partition_t*,size_t,const void*,size_t);
++extern "C" esp_err_t __wrap_esp_partition_write(const esp_partition_t *p,size_t o,const void *d,size_t n) {
++    auto e=__real_esp_partition_write(p,o,d,n);
++    if(e==ESP_OK && counted_task==xTaskGetCurrentTaskHandle() && strcmp(p->label,"nvs")==0) ++writes;
++    return e;
++}
++extern "C" esp_err_t __real_esp_partition_erase_range(const esp_partition_t*,size_t,size_t);
++extern "C" esp_err_t __wrap_esp_partition_erase_range(const esp_partition_t *p,size_t o,size_t n) {
++    auto e=__real_esp_partition_erase_range(p,o,n);
++    if(e==ESP_OK && counted_task==xTaskGetCurrentTaskHandle() && strcmp(p->label,"nvs")==0) erases+=n/4096;
++    return e;
++}
++void study_init(){
++    ESP_ERROR_CHECK(nvs_open("study",NVS_READWRITE,&store));
++    int32_t m=0;
++    nvs_get_i32(store,"next",&m);
++    study_mode=m;
++    ESP_LOGI("study","mode=%d",study_mode);
++}
++void study_set(int m){
++    if(m==99) return;
++    ESP_ERROR_CHECK(nvs_set_i32(store,"next",m));
++    ESP_ERROR_CHECK(nvs_commit(store));
++}
++bool study_load(ButtonRecord &s){
++    size_t len=sizeof(s);
++    return nvs_get_blob(store,"source",&s,&len)==ESP_OK && len==sizeof(s);
++}
++void study_save(const ButtonRecord &s){
++    ButtonRecord old{};
++    if(study_load(old) && !memcmp(&old,&s,sizeof(s))) return;
++    ESP_ERROR_CHECK(nvs_set_blob(store,"source",&s,sizeof(s)));
++    ESP_ERROR_CHECK(nvs_commit(store));
++    ESP_LOGI("study","subscription commit");
++}
++bool study_cursor(uint64_t &n){return nvs_get_u64(store,"cursor",&n)==ESP_OK;}
++void study_commit_cursor(uint64_t n){
++    ESP_ERROR_CHECK(nvs_set_u64(store,"cursor",n));
++    ESP_ERROR_CHECK(nvs_commit(store));
++    ESP_LOGI("study","cursor commit=%llu",(unsigned long long)n);
++}
++void study_wear(){
++    for(unsigned stride: {1u,4u}) {
++        writes=erases=0;
++        counted_task=xTaskGetCurrentTaskHandle();
++        for(unsigned i=stride;i<=2048;i+=stride){
++            ESP_ERROR_CHECK(nvs_set_u64(store,"wear",uint64_t(i)));
++            ESP_ERROR_CHECK(nvs_commit(store));
++        }
++        counted_task=nullptr;
++        ESP_LOGI("study","wear stride=%u events=2048 commits=%u writes=%u erased4k=%u",stride,2048/stride,writes,erases);
++    }
++}
++
+diff --git a/firmware/main/study.h b/firmware/main/study.h
+new file mode 100644
+--- /dev/null
++++ b/firmware/main/study.h
+@@ -0,0 +1,16 @@
++#pragma once
++#include <cstdint>
++struct ButtonRecord {
++    uint64_t fabric, owner, peer;
++    uint32_t id, ready;
++    uint16_t min, max;
++    char hash[65];
++};
++extern int study_mode;
++void study_init();
++void study_set(int);
++void study_wear();
++bool study_load(ButtonRecord &);
++void study_save(const ButtonRecord &);
++bool study_cursor(uint64_t &);
++void study_commit_cursor(uint64_t);
+diff --git a/tests/lab/c6/__init__.py b/tests/lab/c6/__init__.py
+--- a/tests/lab/c6/__init__.py
++++ b/tests/lab/c6/__init__.py
+@@ -3,6 +3,7 @@
+ import csv
+ import json
+ import os
++import re
+ import secrets
+ import subprocess
+ from pathlib import Path
+@@ -11,6 +12,33 @@
+ from lab import PODMAN, eventually, podman
+ 
+ ROOT = Path(__file__).resolve().parents[3]
++
++
++def boot_milestones(lines):
++    # The pinned SDK timestamps both CHIP and OpenThread logs in guest milliseconds.
++    stages = {}
++    subscriptions = {}
++    route_drops = 0
++    for line in lines:
++        stamp = re.match(rb"I\s*\(\s*(\d+)\)", line)
++        if not stamp:
++            continue
++        ms = int(stamp[1])
++        if b"Returned from app_main" in line:
++            stages.setdefault("app_main_return", ms)
++        elif b"Role detached ->" in line and b"disabled" not in line:
++            stages.setdefault("attached", ms)
++        elif b"Msg TX" in line and b"(SecureChannel:CASE_Sigma1)" in line:
++            stages.setdefault("first_sigma1", ms)
++        elif b"Failed to find valid route for:" in line:
++            route_drops += 1
++        elif b"Msg RX" in line and b"(IM:SubscribeResponse)" in line:
++            sender = re.search(rb"Msg RX from (\S+)", line)
++            if sender:
++                subscriptions.setdefault(sender[1], ms)
++    if len(subscriptions) == 2:
++        stages["both_subscribe_responses"] = max(subscriptions.values())
++    return {**stages, "route_drops": route_drops}
+ 
+ 
+ class EmulatedBoard:
+diff --git a/tests/lab/c6/mesh.py b/tests/lab/c6/mesh.py
+--- a/tests/lab/c6/mesh.py
++++ b/tests/lab/c6/mesh.py
+@@ -64,6 +64,8 @@
+                         )
+                         if match and not dataset.done():
+                             dataset.set_result(match[1])
++                    elif b"STUDY next=" in line:
++                        (RUN / "study-ack").write_text(line.split(b"STUDY next=")[1].strip().decode())
+                     elif b"Returned from app_main" in line:
+                         booted.set()
+                     elif match := STATUS.search(line):
+@@ -116,6 +118,10 @@
+                 await send(board, b"dataset " + dataset.result())
+                 provision = False
+             while not (RUN / "power-off").exists():
++                req = RUN / "study-next"
++                if req.exists():
++                    await send(board,b"study "+req.read_bytes())
++                    req.unlink()
+                 await send(board, b"status")
+                 await asyncio.sleep(1)
+             # ESP-EMU saves the board's NVS/fabric on a clean interrupt. The router stays up.
+diff --git a/tests/lab/c6/prepare b/tests/lab/c6/prepare
+--- a/tests/lab/c6/prepare
++++ b/tests/lab/c6/prepare
+@@ -16,7 +16,7 @@
+ echo "$digest  $cache/$pkg.tgz" | sha256sum -c -
+ tar -xzf "$cache/$pkg.tgz" -C "$cache" --strip-components=1 "$pkg/esp-emu"
+ 
+-./dev matter idf.py -C firmware build
++./dev matter bash -ec 'python /work/tests/lab/c6/patch-sdk.py && idf.py -C firmware build'
+ "${runtime[@]}" run --rm -v "$PWD/$cache:/fixture:z" -v "$PWD/tests/lab/c6:/recipe:ro,z" "$REFLEX_LAB_IDF_IMAGE" bash -ec '
+     if [[ ! -f /fixture/router/CMakeLists.txt ]]; then
+         mkdir -p /fixture/router
+diff --git a/tests/lab/ha_smoke.py b/tests/lab/ha_smoke.py
+--- a/tests/lab/ha_smoke.py
++++ b/tests/lab/ha_smoke.py
+@@ -212,7 +212,51 @@
+     )
+ 
+ 
+-def smoke(with_board=False, mode="fallback"):
++def measure_cold_boot(board, reflex, peer_call, restored, fallback):
++    from c6 import boot_milestones
++    from lab import eventually, subscriptions
++
++    previous = subscriptions(reflex, peer_call)
++    board.power_off()
++    trace = board.run / "board.log"
++    offset = trace.stat().st_size
++    peer_call("targets", "reset")
++    start = time.monotonic()
++    board.power_on()
++    eventually(
++        restored, "fresh ESP subscriptions on both peers", reflex, previous, timeout=180
++    )
++    subscribed_at = time.monotonic() - start
++    if fallback:
++        board.wait("fallback boot grace to expire", lambda state: state["active"])
++    if peer_call("targets", "snapshot")["commands"]:
++        raise RuntimeError("Unexpected replay before the first fresh press")
++    pressed_at = time.monotonic() - start
++    peer_call("button", "double")
++    expected = [{"command": "on", "sender": reflex}]
++
++    def received():
++        state = peer_call("targets", "snapshot")
++        if state["commands"] and state["commands"] != expected:
++            raise RuntimeError(f"Unexpected cold-boot command: {state}")
++        return state["commands"] == expected and state["on"]
++
++    eventually(received, "authenticated lamp On after reboot", timeout=20)
++    observed_at = time.monotonic() - start
++    board.wait(
++        "one successful execution on restarted ESP", lambda s: s["executions"] == 1
++    )
++    with trace.open("rb") as log:
++        log.seek(offset)
++        print("ESP boot (ms):", boot_milestones(log), flush=True)
++    print(
++        f"Cold boot: both subscriptions {subscribed_at:.3f}s, "
++        f"press {pressed_at:.3f}s, verified lamp On {observed_at:.3f}s.",
++        flush=True,
++    )
++
++
++def smoke(with_board=False, mode="fallback", cold_boots=0):
+     from lab import (
+         FIXTURES,
+         PODMAN,
+@@ -448,6 +492,14 @@
+         if board:
+             podman("kill", prefix + "server")
+             verify("ha")
++            if os.environ.get("REFLEX_PERSISTENCE_STUDY"):
++                from persistence_study import run
++                run(board, reflex, peer_call, prefix)
++                return
++            for _ in range(cold_boots):
++                measure_cold_boot(
++                    board, reflex, peer_call, restored, mode == "fallback"
++                )
+             if (
+                 podman("inspect", "--format", "{{.State.Running}}", prefix + "server")
+                 != "false"
+diff --git a/tests/lab/lab.py b/tests/lab/lab.py
+--- a/tests/lab/lab.py
++++ b/tests/lab/lab.py
+@@ -282,9 +282,17 @@
+ def main():
+     parser = argparse.ArgumentParser(description=__doc__)
+     modes = parser.add_subparsers(dest="mode", required=True)
+-    modes.add_parser(
++    takeover = modes.add_parser(
+         "takeover", help="exercise controller loss and recovery with an emulated C6"
+-    ).add_argument(
++    )
++    takeover.add_argument(
++        "--cold-boots",
++        type=int,
++        default=0,
++        metavar="N",
++        help="measure N commissioned board restarts with Matter Server offline",
++    )
++    takeover.add_argument(
+         "--mode",
+         choices=("fallback", "direct", "advanced", "all"),
+         default="fallback",
+@@ -339,13 +347,15 @@
+         if args.mode == "smoke-ha":
+             smoke()
+         else:
++            if args.cold_boots < 0:
++                parser.error("--cold-boots must be nonnegative")
+             policies = (
+                 ("direct", "fallback", "advanced")
+                 if args.policy == "all"
+                 else (args.policy,)
+             )
+             for policy in policies:
+-                smoke(with_board=True, mode=policy)
++                smoke(with_board=True, mode=policy, cold_boots=args.cold_boots)
+     elif args.mode == "up":
+         up(args.interface)
+     elif args.mode == "setup":
+diff --git a/tests/lab/peer.mjs b/tests/lab/peer.mjs
+--- a/tests/lab/peer.mjs
++++ b/tests/lab/peer.mjs
+@@ -1,3 +1,4 @@
++import { SessionManager } from "@matter/protocol";
+ import { randomInt } from "node:crypto";
+ import { createServer } from "node:net";
+ import { rm } from "node:fs/promises";
+@@ -48,7 +49,19 @@
+                 result = { commissioned: node.lifecycle.isCommissioned, subscribers,
+                     fabrics: Object.keys(state.fabrics).length,
+                     code: node.lifecycle.isCommissioned ? undefined : state.pairingCodes.manualPairingCode };
+-            } else if (button && ["double", "long"].includes(command)) await press(command);
++            } else if (button && /^expire [0-9]+$/.test(command)) {
++                const id = command.slice(7);
++                let closed = 0;
++                for (const session of node.env.get(SessionManager).sessions) {
++                    if (String(session.peerNodeId) !== id) continue;
++                    for (const subscription of [...session.subscriptions]) {
++                        await subscription.close();
++                        ++closed;
++                    }
++                }
++                result = { closed };
++            } else if (!button && command === "first-on") result = { ns: targets.firstOnNs() };
++            else if (button && ["double", "long"].includes(command)) await press(command);
+             else if (!button && command === "snapshot") result = targets.snapshot();
+             else if (!button && command === "reset") await targets.reset();
+             else if (sensors && command.startsWith("sensor ")) await sensors(command.slice(7));
+diff --git a/tests/lab/peers.mjs b/tests/lab/peers.mjs
+--- a/tests/lab/peers.mjs
++++ b/tests/lab/peers.mjs
+@@ -27,8 +27,10 @@
+ 
+ export async function addTargets(node) {
+     const commands = [];
++    let firstOnNs;
+     function record(context, command, value) {
+         const address = context.session?.peerAddress;
++        if (address && command === "on") firstOnNs ??= process.hrtime.bigint().toString();
+         if (address) commands.push({ sender: String(address.nodeId), command, value });
+     }
+     class Lamp extends OnOffServer.with("Lighting") {
+@@ -50,6 +52,7 @@
+         },
+     }));
+     return {
++        firstOnNs() { return firstOnNs ?? null; },
+         snapshot() {
+             return { commands: [...commands], on: lamp.state.onOff.onOff,
+                 tilt: blind.state.windowCovering.targetPositionTiltPercent100ths };
+@@ -58,6 +61,7 @@
+             await lamp.set({ onOff: { onOff: false } });
+             await blind.set({ windowCovering: { targetPositionTiltPercent100ths: 0 } });
+             commands.length = 0;
++            firstOnNs = undefined;
+         },
+     };
+ }
+diff --git a/tests/lab/persistence_study.py b/tests/lab/persistence_study.py
+new file mode 100644
+--- /dev/null
++++ b/tests/lab/persistence_study.py
+@@ -0,0 +1,151 @@
++"""Cold-start experiments on one disposable fabric, with the HA controller offline."""
++import json
++import re
++import time
++from pathlib import Path
++from lab import podman
++from c6 import boot_milestones
++
++def run(board, reflex, peer_call, prefix):
++    log = board.run / "board.log"
++    out = Path(__file__).resolve().parents[2] / "observations.jsonl"
++    def wait(fn, timeout, what):
++        until = time.monotonic() + timeout
++        while time.monotonic() < until:
++            if value := fn():
++                return value
++            time.sleep(.05)
++        raise RuntimeError("timeout "+what)
++    def mode(value):
++        ack = board.run / "study-ack"
++        ack.unlink(missing_ok=True)
++        (board.run / "study-next").write_text(str(value))
++        wait(lambda: ack.exists() and ack.read_text()==str(value), 180 if value==99 else 12, "mode acknowledgement")
++    def record(row):
++        with out.open("a") as f: print(json.dumps(row),file=f)
++        print("STUDY",json.dumps(row),flush=True)
++    def lines():
++        with log.open("rb") as f:
++            f.seek(offset)
++            return f.read()
++    def cmds():
++        state=peer_call("targets","snapshot")
++        for c in state["commands"]:
++            assert c=={"sender":reflex,"command":"on"},c
++        if state["commands"]: assert state["on"],state
++        return len(state["commands"])
++    def fresh():
++        return len(set(re.findall(rb"study: sub node=(\d+)",lines())))==2
++    tests=[
++        ("warm",0),("no_locator",1),("warm",0),("no_locator",1),("warm",0),("no_locator",1),
++        ("dns",8),("warm",0),("dns",8),
++        ("restore",2),("restore",2),("restore-5s",2),("restore-while-off",2),
++        ("sleep8",0),("sleep8-restore",2),
++        ("early-control",32),("early-on",36),("early-control",32),("early-on",36),
++        ("per-event",0),("batch4",16),("readback",0),
++    ]
++    import os
++    selection=os.environ.get("REFLEX_STUDY_ONLY")
++    if selection in ("timed","recheck"):
++        tests=[t for _ in range(5) for t in (("timed-fresh",0),("timed-restore",2),("timed-restore-early",6))]
++        tests.extend([("expired",2),("idle-restore",2)])
++        if selection=="recheck": tests=[("timed-restore",2)]*3
++    elif selection: tests=[t for t in tests if t[0] in selection.split(",")]
++    for name,flag in tests:
++        mode(flag)
++        board.power_off()
++        off=time.monotonic()
++        offset=log.stat().st_size
++        peer_call("targets","reset")
++        if name=="expired":
++            assert peer_call("button","expire "+reflex)["closed"]==1
++        if name=="restore-while-off":
++            peer_call("button","double")
++        asleep=name.startswith("sleep8")
++        if asleep: podman("kill","--signal","STOP",prefix+"button")
++        if name=="restore-5s": time.sleep(5)
++        start=time.monotonic()
++        result={"series":selection or "matrix","trial":name,"confirmed_off_s":round(start-off,3)}
++        try:
++            board.power_on()
++            if asleep:
++                time.sleep(8)
++                podman("kill","--signal","CONT",prefix+"button")
++                asleep=False
++                peer_call("button","double")
++                time.sleep(.7)
++                result["wake_press_count"]=cmds()
++            if name.startswith("timed-"):
++                wait(lambda: len(set(re.findall(rb"study: case node=(\d+)",lines())))==2,60,"CASE at both peers")
++                result["press_s"]=round(time.monotonic()-start,3)
++                peer_call("button","double")
++                deadline=time.monotonic()+2
++                while time.monotonic()<deadline and not cmds(): time.sleep(.05)
++                result["first_press_count"]=cmds()
++                if not result["first_press_count"]:
++                    if flag & 2 and b"old subscription delivered" in lines():
++                        wait(lambda: b"study: sub node=" in lines(),60,"target subscription")
++                    else:
++                        wait(fresh,60,"fresh source and target")
++                    peer_call("button","double")
++                wait(lambda:cmds()==1,15,"exactly one authenticated On")
++                received_ns=int(peer_call("targets","first-on")["ns"])
++                result["first_receipt_s"]=round(received_ns/1e9-start,3)
++            elif flag & 2:
++                if name=="idle-restore":
++                    wait(fresh,60,"fallback without user input")
++                    assert cmds()==0
++                    result["quiet_until_fallback"]=True
++                wait(lambda:b"listening id=" in lines(),70,"restore listener")
++                wait(lambda: b"study: sub node=" in lines(),60,"target subscription")
++                result["before_fresh"]=cmds()
++                peer_call("button","double")
++                time.sleep(1)
++                result["before_fallback_count"]=cmds()
++                if b"old subscription delivered" not in lines():
++                    wait(fresh,90,"fresh subscription fallback")
++                    before=cmds()
++                    peer_call("button","double")
++                    wait(lambda:cmds()==before+1,10,"fresh press after fallback")
++            elif flag & 32:
++                wait(lambda: b"target subscription held" in lines() and b"subscription commit" in lines(),90,"source and target CASE")
++                peer_call("button","double")
++                time.sleep(.7)
++                result["during_hold"]=cmds()
++                wait(fresh,30,"target subscription completion")
++                before=cmds()
++                peer_call("button","double")
++                wait(lambda:cmds()==before+1,10,"post-hold command")
++            else:
++                wait(fresh,100,"two subscriptions")
++                result["before_fresh"]=cmds()
++                n=7 if name in ("per-event","batch4") else 1
++                for _ in range(n):
++                    before=cmds()
++                    peer_call("button","double")
++                    wait(lambda:cmds()==before+1,12,"fresh command")
++            result["wall_s"]=round(time.monotonic()-start,3)
++            time.sleep(.8)
++            result["receipts"]=cmds()
++            d=lines()
++            result.update(boot_milestones(d.splitlines()))
++            result["notes"]=[m.decode() for m in re.findall(rb"study: ([^\r\n]+)",d)]
++            result["sigma2_resume"]=d.count(b"Msg RX") and len(re.findall(rb"Msg RX[^\n]*CASE_Sigma2Resume\)",d))
++            result["source_sub_requests"]=len(re.findall(rb"Msg TX[^\n]*:5570\][^\n]*IM:SubscribeRequest",d))
++            roles=re.findall(rb"Role detached -> (child|router|leader)",d)
++            result["attached_role"]=roles[0].decode() if roles else None
++            result["old_session_drops"]=d.count(b"Data received on an unknown session")
++            result["stages"]=[(int(m[0]),m[1].decode()) for m in re.findall(rb"I\s*\(\s*(\d+)\) study: ((?:case |sub |action |listening|target subscription held)[^\r\n]*)",d)]
++            record(result)
++        except (RuntimeError, AssertionError) as exc:
++            d=lines()
++            result.update(boot_milestones(d.splitlines()))
++            result["error"]=str(exc)
++            result["notes"]=[m.decode() for m in re.findall(rb"study: ([^\r\n]+)",d)]
++            record(result)
++        finally:
++            if asleep: podman("kill","--signal","CONT",prefix+"button")
++    if selection in ("timed","recheck"): return
++    offset=log.stat().st_size
++    mode(99)
++    record({"wear":[m.decode() for m in re.findall(rb"study: (wear [^\r\n]+)",lines())]})
+diff --git a/tests/lab/c6/patch-sdk.py b/tests/lab/c6/patch-sdk.py
+new file mode 100644
+--- /dev/null
++++ b/tests/lab/c6/patch-sdk.py
+@@ -0,0 +1,21 @@
++from pathlib import Path
++import hashlib, os
++p=Path(os.environ['ESP_MATTER_PATH'])/'connectedhomeip/connectedhomeip/src/app/ReadClient.h'
++assert hashlib.sha256(p.read_bytes()).hexdigest()=='70e1b27dca57b8568e794a49be5bd099966c81aa69a45e104efb9d793c1f57f1'
++s=p.read_text().replace('    auto GetSubscriptionId() const','''    // Disposable lab, restore the listener on a newly authenticated CASE session.
++    CHIP_ERROR StudyResume(const SessionHandle &session, SubscriptionId id, uint16_t min, uint16_t max)
++    {
++        VerifyOrReturnError(IsIdle() && IsSubscriptionType() && session->IsSecureSession() &&
++            session->AsSecureSession()->IsCASESession(), CHIP_ERROR_INCORRECT_STATE);
++        VerifyOrReturnError(mReadPrepareParams.mSessionHolder.Grab(session), CHIP_ERROR_INCORRECT_STATE);
++        mPeer = session->AsSecureSession()->GetPeer();
++        mSubscriptionId = id;
++        mMinIntervalFloorSeconds = min;
++        mMaxInterval = max;
++        mWaitingForFirstPrimingReport = false;
++        MoveToState(ClientState::SubscriptionActive);
++        return RefreshLivenessCheckTimer();
++    }
++    auto GetSubscriptionId() const''')
++p.write_text(s)
++

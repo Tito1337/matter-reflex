@@ -14,6 +14,9 @@
 #include <clusters/WindowCovering/Commands.h>
 #include <controller/InvokeInteraction.h>
 #include <platform/ConnectivityManager.h>
+#include <platform/ThreadStackManager.h>
+#include <openthread/netdata.h>
+#include <openthread/thread.h>
 #include <transport/SecureSession.h>
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -160,8 +163,13 @@ public:
         // CASE can become defunct while the subscription still awaits a report.
         if (reader && !has_active_session()) disconnect();
         if (!attached || reader || connecting || esp_timer_get_time() < retry_at) return;
+        // A returning Thread router can attach before it receives Network Data.
+        // Its mesh-local peers are already reachable. For other saved addresses,
+        // give the NetData event one maintenance interval to arrive before Sigma1.
+        const bool can_use_cache = cached_address.HasValue() && server_case_params.sessionManager;
+        if (can_use_cache && !initial_route_ready()) return;
         connecting = true;
-        attempts.start(cached_address.HasValue() && server_case_params.sessionManager, [this] { connect_direct(); }, [this] {
+        attempts.start(can_use_cache, [this] { connect_direct(); }, [this] {
             Server::GetInstance().GetCASESessionManager()->FindOrEstablishSession(
                 ScopedNodeId(node, fabric), &on_connected, &on_failure);
         });
@@ -227,6 +235,24 @@ private:
     std::unique_ptr<CASEClient, ReleaseCASEClient> direct_client;
     int64_t retry_at = 0;
     unsigned backoff = 1;
+    int64_t network_data_deadline = 0;
+    bool initial_route_ready() {
+        const auto *endpoint = address_cache.lookup(node);
+        if (retry_at || !endpoint) return true;
+        const auto now = esp_timer_get_time();
+        if (!network_data_deadline) network_data_deadline = now + kSecond / 2;
+        if (now >= network_data_deadline) return true;
+
+        auto &thread = DeviceLayer::ThreadStackMgrImpl();
+        thread.LockThreadStack();
+        auto *ot = thread.OTInstance();
+        const bool ready = ot && (otNetDataGetLength(ot) ||
+            std::equal(endpoint->ip.begin(), endpoint->ip.begin() + OT_MESH_LOCAL_PREFIX_SIZE,
+                       otThreadGetMeshLocalPrefix(ot)->m8));
+        thread.UnlockThreadStack();
+        return ready;
+    }
+
     void disconnect() {
         reader.reset();
         session.Release();
@@ -381,7 +407,8 @@ void dispatch(size_t index, EventNumber number, uint64_t run) {
     const auto &rule = rule_set->rows[index];
     auto *target = find(rule.target);
     auto session = target ? target->session.Get() : Optional<SessionHandle>();
-    if (!target || !target->established || !session.HasValue() || !session.Value()->IsActiveSession()) {
+    const bool direct_button_toggle = rule.direct && rule.op == reflex::kNativeToggle && !reflex::sensor_cluster(rule.event);
+    if (!session.HasValue() || !session.Value()->IsActiveSession() || (!target->established && !direct_button_toggle)) {
         reflex_runtime::command_result(rule.id, number, kNoSession, run);
         return;
     }
@@ -398,6 +425,9 @@ void dispatch(size_t index, EventNumber number, uint64_t run) {
         break;
     case 1:
         error = invoke(session.Value(), rule, number, run, Clusters::OnOff::Commands::On::Type{});
+        break;
+    case reflex::kNativeToggle:
+        error = invoke(session.Value(), rule, number, run, Clusters::OnOff::Commands::Toggle::Type{});
         break;
     case 3: {
         Clusters::LevelControl::Commands::MoveToLevelWithOnOff::Type request;
@@ -443,7 +473,7 @@ void dispatch(size_t index, EventNumber number, uint64_t run) {
     for (size_t i = 0; i < rule_set->count; ++i) {
         const auto &other = rule_set->rows[i];
         if (other.target != rule.target || other.target_ep != rule.target_ep) continue;
-        if (states[i].on != (command.op != 0)) states[i].on = -1;
+        if (command.op == reflex::kNativeToggle || states[i].on != (command.op != 0)) states[i].on = -1;
         if (command.op == 3 && states[i].level != command.value) states[i].level = -1;
     }
 }

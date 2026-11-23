@@ -231,12 +231,16 @@ The XIAO writes a routable endpoint to NVS only when it is first learned or
 changes. Each record belongs to the current fabric, XIAO node and peer.
 
 On reboot, after Thread attaches, the XIAO opens a Matter CASE session
-directly at the saved endpoint and subscribes again. This works while Thread
-DNS-SD is still starting, provided the saved address has a working mesh
-route. Some addresses depend on a prefix advertised by the border router.
+directly at the saved endpoint and subscribes again. A mesh-local peer can
+connect as soon as Thread attaches. For other saved addresses, the XIAO
+briefly waits for Thread Network Data, which carries the advertised routes.
+Its maintenance timer also retries if that notification never comes. [Emulator cold-boot measurements](../tests/lab/README.md#measure-recovery-after-esp-power-loss)
+
+Cached CASE works while Thread DNS-SD is still starting, provided the
+saved address has a working mesh route. Some addresses depend on a prefix advertised by the border router.
 A failed cached connection gives discovery a full attempt to find a new
 address. If the XIAO runs out of session slots, it retries the same method.
-The button and its target must both be ready before a fresh press can act.
+A direct native Toggle needs a fresh button event and an active CASE session to the target. The target can still be establishing its subscription when it executes the command.
 
 The offline Matter network test (`./dev test-sensors`) drops DNS-SD traffic,
 clears both peers’ sessions and discovered addresses, and loads their saved

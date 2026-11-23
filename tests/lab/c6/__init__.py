@@ -3,6 +3,7 @@
 import csv
 import json
 import os
+import re
 import secrets
 import subprocess
 from pathlib import Path
@@ -11,6 +12,33 @@ from tempfile import TemporaryDirectory
 from lab import PODMAN, eventually, podman
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def boot_milestones(lines):
+    # The pinned SDK timestamps both CHIP and OpenThread logs in guest milliseconds.
+    stages = {}
+    subscriptions = {}
+    route_drops = 0
+    for line in lines:
+        stamp = re.match(rb"[IWE]\s*\(\s*(\d+)\)", line)
+        if not stamp:
+            continue
+        ms = int(stamp[1])
+        if b"Returned from app_main" in line:
+            stages.setdefault("app_main_return", ms)
+        elif b"Role detached ->" in line and b"disabled" not in line:
+            stages.setdefault("attached", ms)
+        elif b"Msg TX" in line and b"(SecureChannel:CASE_Sigma1)" in line:
+            stages.setdefault("first_sigma1", ms)
+        elif b"Failed to find valid route for:" in line:
+            route_drops += 1
+        elif b"Msg RX" in line and b"(IM:SubscribeResponse)" in line:
+            sender = re.search(rb"Msg RX from (\S+)", line)
+            if sender:
+                subscriptions.setdefault(sender[1], ms)
+    if len(subscriptions) == 2:
+        stages["both_subscribe_responses"] = max(subscriptions.values())
+    return {**stages, "route_drops": route_drops}
 
 
 class EmulatedBoard:

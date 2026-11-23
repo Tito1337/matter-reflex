@@ -23,7 +23,10 @@ int main() {
         assert(reflex::resolve(r, {1, 200}, command));
         switch (r.target) {
         case 40: assert(command.op == 3 && command.value == 178); break;
-        case 41: assert(r.op == 2 && command.op == 0); break;
+        case 41:
+            assert(r.op == reflex::kNativeToggle);
+            assert(reflex::resolve(r, {-1, -1}, command) && command.op == reflex::kNativeToggle);
+            break;
         case 42: assert(command.op == reflex::kCoverPosition && command.value == 2500); break;
         case 43: assert(r.op == 4 && r.value == -128 && command.op == 3 && command.value < 200); break;
         }

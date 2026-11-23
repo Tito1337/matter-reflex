@@ -13,7 +13,7 @@ uint64_t read_be(const uint8_t *data, size_t size) {
 bool operational(uint64_t id) { return id && id <= 0xffffffefffffffffULL; }
 bool valid_operand(uint8_t op, int16_t value) {
     switch (op) {
-    case 0: case 1: case 2:
+    case 0: case 1: case 2: case kNativeToggle:
     case kCoverOpen: case kCoverClose: case kCoverStop:
     case kTiltOpen: case kTiltClose: case kTiltStop: return value == 0;
     case 3: return value >= 0 && value <= 255;
@@ -116,7 +116,7 @@ bool resolve(const Rule &r, State state, Command &cmd) {
         return true;
     }
     int brightness = r.value;
-    if (r.op < 2) { cmd = {r.op, 0}; return true; }
+    if (r.op < 2 || r.op == kNativeToggle) { cmd = {r.op, 0}; return true; }
     if (r.op == 2) {
         if (state.on != 0 && state.on != 1) return false;
         cmd = {static_cast<uint8_t>(!state.on), 0};

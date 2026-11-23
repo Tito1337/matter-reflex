@@ -45,7 +45,9 @@ async def commission(base, codes):
             await request("matter/commission", code=code, network_only=True)
 
 
-async def setup(base, codes, *, sensors=False, mode="fallback", reflex_entry_id=None):
+async def setup(
+    base, codes, *, sensors=False, mode="fallback", reflex_entry_id=None, toggle=False
+):
     if codes:
         await commission(base, codes)
     async with api(base) as (http, request):
@@ -102,7 +104,12 @@ async def setup(base, codes, *, sensors=False, mode="fallback", reflex_entry_id=
             label = await request("config/label_registry/create", name="reflex")
         rules = []
         for gesture, service, target, data in (
-            ("multi_press_2", "light.turn_on", found["light"], {}),
+            (
+                "multi_press_2",
+                "light.toggle" if toggle else "light.turn_on",
+                found["light"],
+                {},
+            ),
             (
                 "long_press",
                 "cover.set_cover_tilt_position",

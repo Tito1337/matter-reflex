@@ -15,7 +15,7 @@ example = yaml.safe_load(button_example.split("```yaml\n", 1)[1].split("```", 1)
 endpoints = {
     "event.reading_button": Endpoint(0x123456789ABCDEF0, 2, event_types=("multi_press_2",)),
     "light.reading_lamp": Endpoint(40, 1, dimmable=True),
-    "switch.outlet": Endpoint(41, 1, plug_ops=frozenset({0, 1, 2})),
+    "switch.outlet": Endpoint(41, 1, plug_ops=frozenset({0, 1, 14})),
     "cover.shade": Endpoint(42, 1, cover_ops=frozenset({9})),
     "light.dimmer": Endpoint(43, 1, dimmable=True),
 }

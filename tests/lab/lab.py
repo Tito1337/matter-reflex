@@ -282,9 +282,22 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_subparsers(dest="mode", required=True)
-    modes.add_parser(
+    takeover = modes.add_parser(
         "takeover", help="exercise controller loss and recovery with an emulated C6"
-    ).add_argument(
+    )
+    takeover.add_argument(
+        "--toggle-recovery",
+        action="store_true",
+        help="test two native toggles with the lamp subscription delayed (direct mode)",
+    )
+    takeover.add_argument(
+        "--cold-boots",
+        type=int,
+        default=0,
+        metavar="N",
+        help="measure N commissioned board restarts with Matter Server offline",
+    )
+    takeover.add_argument(
         "--mode",
         choices=("fallback", "direct", "advanced", "all"),
         default="fallback",
@@ -339,13 +352,22 @@ def main():
         if args.mode == "smoke-ha":
             smoke()
         else:
+            if args.cold_boots < 0:
+                parser.error("--cold-boots must be nonnegative")
+            if args.toggle_recovery and args.policy != "direct":
+                parser.error("--toggle-recovery requires --mode direct")
             policies = (
                 ("direct", "fallback", "advanced")
                 if args.policy == "all"
                 else (args.policy,)
             )
             for policy in policies:
-                smoke(with_board=True, mode=policy)
+                smoke(
+                    with_board=True,
+                    mode=policy,
+                    cold_boots=args.cold_boots,
+                    toggle=args.toggle_recovery,
+                )
     elif args.mode == "up":
         up(args.interface)
     elif args.mode == "setup":

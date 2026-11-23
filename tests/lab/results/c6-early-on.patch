@@ -1,0 +1,359 @@
+--- a/components/matter_reflex/reflex_peers.cpp
++++ b/components/matter_reflex/reflex_peers.cpp
+@@ -14,6 +14,9 @@
+ #include <clusters/WindowCovering/Commands.h>
+ #include <controller/InvokeInteraction.h>
+ #include <platform/ConnectivityManager.h>
++#include <platform/ThreadStackManager.h>
++#include <openthread/netdata.h>
++#include <openthread/thread.h>
+ #include <transport/SecureSession.h>
+ #include <esp_log.h>
+ #include <esp_timer.h>
+@@ -41,6 +44,7 @@
+     return error;
+ }
+ 
++extern uint8_t lab_mode;
+ namespace reflex_peers {
+ using namespace chip;
+ using namespace chip::app;
+@@ -160,6 +164,10 @@
+         // CASE can become defunct while the subscription still awaits a report.
+         if (reader && !has_active_session()) disconnect();
+         if (!attached || reader || connecting || esp_timer_get_time() < retry_at) return;
++        // A returning Thread router can attach before it receives Network Data.
++        // Its mesh-local peers are already reachable. For other saved addresses,
++        // give the NetData event one maintenance interval to arrive before Sigma1.
++        if (!initial_route_ready()) return;
+         connecting = true;
+         attempts.start(cached_address.HasValue() && server_case_params.sessionManager, [this] { connect_direct(); }, [this] {
+             Server::GetInstance().GetCASESessionManager()->FindOrEstablishSession(
+@@ -211,6 +219,7 @@
+     }
+     void OnEventData(const EventHeader &, TLV::TLVReader *, const StatusIB *) override;
+     void OnSubscriptionEstablished(SubscriptionId) override {
++        ESP_LOGI("early", "sub %s", buttons ? "button" : "target");
+         established = true;
+         attempts.confirmed();
+         remember_report_address();
+@@ -227,6 +236,24 @@
+     std::unique_ptr<CASEClient, ReleaseCASEClient> direct_client;
+     int64_t retry_at = 0;
+     unsigned backoff = 1;
++    int64_t network_data_deadline = 0;
++    bool initial_route_ready() {
++        const auto *endpoint = address_cache.lookup(node);
++        if (retry_at || !endpoint) return true;
++        const auto now = esp_timer_get_time();
++        if (!network_data_deadline) network_data_deadline = now + kSecond / 2;
++        if (now >= network_data_deadline) return true;
++
++        auto &thread = DeviceLayer::ThreadStackMgrImpl();
++        thread.LockThreadStack();
++        auto *ot = thread.OTInstance();
++        const bool ready = ot && (otNetDataGetLength(ot) ||
++            std::equal(endpoint->ip.begin(), endpoint->ip.begin() + OT_MESH_LOCAL_PREFIX_SIZE,
++                       otThreadGetMeshLocalPrefix(ot)->m8));
++        thread.UnlockThreadStack();
++        return ready;
++    }
++
+     void disconnect() {
+         reader.reset();
+         session.Release();
+@@ -295,6 +322,19 @@
+         p.reader.reset(new (std::nothrow) ReadClient(InteractionModelEngine::GetInstance(), &mgr, p,
+                                                     ReadClient::InteractionType::Subscribe));
+         if (!p.reader || !p.session.Grab(handle)) { p.disconnect(); return; }
++        ESP_LOGI("early", "case %s", p.buttons ? "button" : "target");
++        if (p.lamp && (lab_mode & 2)) {
++            DeviceLayer::SystemLayer().StartTimer(System::Clock::Seconds16(6), [](System::Layer *, void *ctx) {
++                auto &peer = *static_cast<Peer *>(ctx);
++                auto session = peer.session.Get();
++                if (session.HasValue() && peer.reader) peer.subscribe(session.Value());
++            }, ctx);
++        } else {
++            p.subscribe(handle);
++        }
++    }
++    void subscribe(const SessionHandle &handle) {
++        Peer &p = *this;
+         EventPathParams events(kInvalidEndpointId, 0x3b, kInvalidEventId, true /* urgent */);
+         AttributePathParams attrs[4 + sensor_clusters.size()];
+         size_t attr_count = 0;
+@@ -381,7 +421,11 @@
+     const auto &rule = rule_set->rows[index];
+     auto *target = find(rule.target);
+     auto session = target ? target->session.Get() : Optional<SessionHandle>();
+-    if (!target || !target->established || !session.HasValue() || !session.Value()->IsActiveSession()) {
++    const bool active = session.HasValue() && session.Value()->IsActiveSession();
++    const bool subscribed = target && target->established;
++    const bool allow_early = (lab_mode & 1) && rule.direct && rule.op == 1 && !reflex::sensor_cluster(rule.event);
++    ESP_LOGI("early", "action op=%u subscribed=%u active=%u", unsigned(rule.op), unsigned(subscribed), unsigned(active));
++    if (!active || (!subscribed && !allow_early)) {
+         reflex_runtime::command_result(rule.id, number, kNoSession, run);
+         return;
+     }
+--- a/components/matter_reflex/reflex_runtime.cpp
++++ b/components/matter_reflex/reflex_runtime.cpp
+@@ -302,6 +302,14 @@
+         if (active_changed) active_changed(now);
+     }
+ }
++void thread_event(const DeviceLayer::ChipDeviceEvent *event, intptr_t) {
++    if (event->Type == DeviceLayer::DeviceEventType::kThreadStateChange &&
++        (event->ThreadStateChange.RoleChanged || event->ThreadStateChange.NetDataChanged)) {
++        select_fabric();
++        reflex_peers::tick();
++    }
++}
++
+ void timer(System::Layer *layer, void *) {
+     select_fabric();
+     update_active();
+@@ -428,6 +436,7 @@
+     ESP_ERROR_CHECK(CommandHandlerInterfaceRegistry::Instance().RegisterCommandHandler(&lease_output) == CHIP_NO_ERROR ? ESP_OK : ESP_FAIL);
+     boot_nonce = esp_random();
+     initialized = true;
++    ESP_ERROR_CHECK(DeviceLayer::PlatformMgr().AddEventHandler(thread_event, 0) == CHIP_NO_ERROR ? ESP_OK : ESP_FAIL);
+     timer(&DeviceLayer::SystemLayer(), nullptr);
+ }
+ 
+--- a/firmware/main/app_main.cpp
++++ b/firmware/main/app_main.cpp
+@@ -14,6 +14,9 @@
+ #include <platform/ThreadStackManager.h>
+ #include <cstdio>
+ #include <cstring>
++
++uint8_t lab_mode;
++static nvs_handle_t lab_storage;
+ 
+ namespace {
+ using namespace chip;
+@@ -73,6 +76,12 @@
+ 
+ void command(char *line) {
+     lock::ScopedChipStackLock lock(portMAX_DELAY);
++    if (!strncmp(line, "study ", 6) && strlen(line) == 7 && line[6] >= '0' && line[6] <= '3') {
++        ESP_ERROR_CHECK(nvs_set_u8(lab_storage, "next", line[6] - '0'));
++        ESP_ERROR_CHECK(nvs_commit(lab_storage));
++        printf("STUDY next=%c\n", line[6]);
++        return;
++    }
+     bool ok = false;
+     if (!strncmp(line, "dataset ", 8)) ok = join(line+8);
+     else if (!strncmp(line, "key ", 4)) ok = reflex_http_set_key(line+4);
+@@ -117,6 +126,10 @@
+ 
+ extern "C" void app_main() {
+     ESP_ERROR_CHECK(nvs_flash_init());
++    ESP_ERROR_CHECK(nvs_open("lab_early", NVS_READWRITE, &lab_storage));
++    auto error = nvs_get_u8(lab_storage, "next", &lab_mode);
++    if (error != ESP_ERR_NVS_NOT_FOUND) ESP_ERROR_CHECK(error);
++    ESP_LOGI("early", "mode=%u", unsigned(lab_mode));
+     esp_matter::node::config_t cfg;
+     auto *node = esp_matter::node::create(&cfg, nullptr, identify);
+     ESP_ERROR_CHECK(node ? ESP_OK : ESP_ERR_NO_MEM);
+--- a/tests/lab/c6/mesh.py
++++ b/tests/lab/c6/mesh.py
+@@ -64,6 +64,8 @@
+                         )
+                         if match and not dataset.done():
+                             dataset.set_result(match[1])
++                    elif b"STUDY next=" in line:
++                        (RUN / "study-ack").write_text(line.split(b"STUDY next=")[1].strip().decode())
+                     elif b"Returned from app_main" in line:
+                         booted.set()
+                     elif match := STATUS.search(line):
+@@ -116,6 +118,10 @@
+                 await send(board, b"dataset " + dataset.result())
+                 provision = False
+             while not (RUN / "power-off").exists():
++                req = RUN / "study-next"
++                if req.exists():
++                    await send(board,b"study "+req.read_bytes())
++                    req.unlink()
+                 await send(board, b"status")
+                 await asyncio.sleep(1)
+             # ESP-EMU saves the board's NVS/fabric on a clean interrupt. The router stays up.
+--- a/tests/lab/ha_smoke.py
++++ b/tests/lab/ha_smoke.py
+@@ -448,6 +448,10 @@
+         if board:
+             podman("kill", prefix + "server")
+             verify("ha")
++            if os.environ.get("REFLEX_EARLY_ON_STUDY"):
++                from early_on_study import run
++                run(board, reflex, peer_call, prefix)
++                return
+             if (
+                 podman("inspect", "--format", "{{.State.Running}}", prefix + "server")
+                 != "false"
+--- a/tests/lab/peer.mjs
++++ b/tests/lab/peer.mjs
+@@ -48,7 +48,8 @@
+                 result = { commissioned: node.lifecycle.isCommissioned, subscribers,
+                     fabrics: Object.keys(state.fabrics).length,
+                     code: node.lifecycle.isCommissioned ? undefined : state.pairingCodes.manualPairingCode };
+-            } else if (button && ["double", "long"].includes(command)) await press(command);
++            } else if (!button && command === "first-on") result = { ns: targets.firstOnNs() };
++            else if (button && ["double", "long"].includes(command)) await press(command);
+             else if (!button && command === "snapshot") result = targets.snapshot();
+             else if (!button && command === "reset") await targets.reset();
+             else if (sensors && command.startsWith("sensor ")) await sensors(command.slice(7));
+--- a/tests/lab/peers.mjs
++++ b/tests/lab/peers.mjs
+@@ -27,8 +27,10 @@
+ 
+ export async function addTargets(node) {
+     const commands = [];
++    let firstOnNs;
+     function record(context, command, value) {
+         const address = context.session?.peerAddress;
++        if (address && command === "on") firstOnNs ??= process.hrtime.bigint().toString();
+         if (address) commands.push({ sender: String(address.nodeId), command, value });
+     }
+     class Lamp extends OnOffServer.with("Lighting") {
+@@ -50,6 +52,7 @@
+         },
+     }));
+     return {
++        firstOnNs() { return firstOnNs ?? null; },
+         snapshot() {
+             return { commands: [...commands], on: lamp.state.onOff.onOff,
+                 tilt: blind.state.windowCovering.targetPositionTiltPercent100ths };
+@@ -58,6 +61,7 @@
+             await lamp.set({ onOff: { onOff: false } });
+             await blind.set({ windowCovering: { targetPositionTiltPercent100ths: 0 } });
+             commands.length = 0;
++            firstOnNs = undefined;
+         },
+     };
+ }
+--- /dev/null
++++ b/tests/lab/early_on_study.py
+@@ -0,0 +1,122 @@
++"""Isolated cold-boot comparison using normal Matter subscriptions."""
++import json
++import os
++import re
++import time
++from pathlib import Path
++
++
++def wait(check, seconds, description):
++    until = time.monotonic() + seconds
++    while time.monotonic() < until:
++        if value := check():
++            return value
++        time.sleep(0.04)
++    raise TimeoutError(description)
++
++
++def run(board, reflex, peer_call, prefix):
++    log = board.run / "board.log"
++    output = Path(__file__).resolve().parents[2] / "early-results.jsonl"
++    schedule = []
++    for pair in range(12):
++        order = (0, 1) if pair % 2 == 0 else (1, 0)
++        schedule.extend((pair + 1, "ordinary", flag, "double") for flag in order)
++    for pair in range(4):
++        order = (2, 3) if pair % 2 == 0 else (3, 2)
++        schedule.extend((pair + 1, "delayed", flag, "double") for flag in order)
++    schedule.extend([(1, "other-command", 3, "long"), (2, "other-command", 3, "long"),
++                     (1, "while-off", 0, "double"), (1, "while-off", 1, "double")])
++
++    if os.environ.get("REFLEX_EARLY_SERIES") == "source":
++        schedule = [(3, "other-command", 3, "long"), (4, "other-command", 3, "long")]
++        for pair in range(3):
++            order = (2, 3) if pair % 2 == 0 else (3, 2)
++            schedule.extend((pair + 5, "delayed", flag, "double") for flag in order)
++        for pair in range(8):
++            order = (0, 1) if pair % 2 == 0 else (1, 0)
++            schedule.extend((pair + 1, "source-ready", flag, "double") for flag in order)
++
++    def snapshot():
++        return peer_call("targets", "snapshot")
++
++    def verify(state, commands):
++        assert state["commands"] == commands, state
++        assert state["on"] == any(cmd["command"] == "on" for cmd in commands), state
++
++    on = {"command": "on", "sender": reflex}
++    for pair, scenario, flag, gesture in schedule:
++        ack = board.run / "study-ack"
++        ack.unlink(missing_ok=True)
++        (board.run / "study-next").write_text(str(flag))
++        wait(lambda: ack.exists() and ack.read_text() == str(flag), 15, "mode acknowledgement")
++        board.power_off()
++        offset = log.stat().st_size
++
++        def lines():
++            with log.open("rb") as stream:
++                stream.seek(offset)
++                return stream.read()
++
++        def both(stage):
++            data = lines()
++            return all(b"early: " + stage + b" " + peer in data for peer in (b"button", b"target"))
++
++        peer_call("targets", "reset")
++        if scenario == "while-off":
++            peer_call("button", "double")
++        start = time.monotonic_ns()
++        row = dict(pair=pair, scenario=scenario, early=bool(flag & 1), gesture=gesture)
++        row["fabric"] = 2 if os.environ.get("REFLEX_EARLY_SERIES") == "source" else 1
++        try:
++            board.power_on()
++            if scenario != "source-ready":
++                wait(lambda: both(b"case"), 75, "both authenticated peer sessions")
++            if scenario in ("delayed", "other-command", "source-ready"):
++                wait(lambda: b"early: sub button" in lines(), 45, "button subscribed")
++            if scenario == "while-off":
++                wait(lambda: both(b"sub"), 75, "fresh subscriptions after offline press")
++                time.sleep(.8)
++                verify(snapshot(), [])
++            row["gesture_start_s"] = round((time.monotonic_ns() - start) / 1e9, 3)
++            peer_call("button", gesture)
++            wait(lambda: both(b"sub"), 75, "both fresh subscriptions")
++            time.sleep(1.5)
++            state = snapshot()
++            commands = state["commands"]
++            row["first_count"] = len(commands)
++            if gesture == "double":
++                assert len(commands) <= 1
++                verify(state, [on] if commands else [])
++                if commands:
++                    received = int(peer_call("targets", "first-on")["ns"])
++                    row["first_on_s"] = round((received - start) / 1e9, 3)
++            before_second = lines()
++            if gesture == "long":
++                match = re.search(rb"early: action op=10 subscribed=([01]) active=1", before_second)
++                assert match, "the long press must match the cover rule"
++                if match[1] == b"0":
++                    verify(state, [])
++                else:
++                    assert len(commands) == 1 and commands[0]["command"] == "tilt"
++                    assert commands[0]["sender"] == reflex
++            assert f"early: mode={flag}".encode() in before_second
++            row["first_stages_ms"] = [
++                [int(ms), label.decode()] for ms, label in re.findall(
++                    rb"I\s*\(\s*(\d+)\) early: ([^\r\n]+)", before_second
++                )
++            ]
++            for port, peer in [(5570, "button"), (5571, "target")]:
++                calls = re.findall(rb"Msg TX[^\n]*:" + str(port).encode() + rb"\][^\n]*IM:SubscribeRequest", before_second)
++                row[peer + "_subscribe_requests"] = len(calls)
++                assert calls, peer + " had no fresh SubscribeRequest"
++            peer_call("button", "double")
++            wait(lambda: len(snapshot()["commands"]) > len(commands), 12, "follow-up press")
++            time.sleep(.6)
++            verify(snapshot(), commands + [on])
++            row["follow_up"] = True
++        except (TimeoutError, RuntimeError, AssertionError) as exc:
++            row["error"] = repr(exc)
++        with output.open("a") as stream:
++            print(json.dumps(row), file=stream)
++        print("EARLY", json.dumps(row), flush=True)

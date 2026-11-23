@@ -67,6 +67,29 @@ Each phase checks the exact command count, order, arguments and actuator states.
 
 The upstream emulator documents the radio bridge and the IDF example used here. [ESP-EMU Thread guide](https://github.com/espressif/esp-emulator/blob/v1.2.0/docs/guides/THREAD.md)
 
+## Measure recovery after ESP power loss
+
+Run `./dev lab takeover --mode direct --cold-boots 7` to measure seven restarts after commissioning. The runner stops Matter Server, leaves the Thread border router and peers powered, and restarts the ESP emulator from its saved flash each time. Use `--mode fallback` to include the firmware's ten-second boot grace before a fallback rule can act.
+
+Run `./dev lab takeover --mode direct --toggle-recovery --cold-boots 3` to check native Toggle with a late lamp subscription. This test uses `nft` and `nsenter` on the Linux host. Within the disposable TAP network namespace it temporarily drops encrypted replies from the lamp while allowing CASE establishment and button reports. On each boot it checks for replay of an offline press, sends two fresh matching gestures, and verifies two commands from the ESP and the lamp state after each. It then restores replies and checks subscription recovery and the final state. On November 23, 2026, all three cold boots delivered exactly two native Toggles from the ESP before the lamp subscription completed. The lamp went off → on → off on each boot.
+
+The runner records two clocks. On the ESP, the serial trace timestamps the return from `app_main`, Thread attachment, the first outgoing CASE Sigma1, and the second distinct peer's SubscribeResponse. On the host, the runner times from virtual power-on until it observes fresh subscriptions on both peers, sends one new double press, and verifies the lamp's On command and the ESP sender ID. The host time is an upper bound that includes polling, gesture recognition, and receipt observation. The separate HA handback check waits eleven seconds to distinguish a renewed lease from the board's initial standby period.
+
+On November 22, 2026, seven direct-mode boots with the 500 ms polling firmware at `5bd5cb2` were compared with seven boots that also wake on Thread role and Network Data changes. Each series used a fresh fabric with the same seven rules, one source node and one target node.
+
+| From boot to milestone | Polling, median (range) | Thread events, median (range) |
+| --- | --- | --- |
+| ESP returned from `app_main` | 0.157 s (all runs) | 0.157 s (all runs) |
+| ESP attached to Thread | 1.17 s (1.00–1.86) | 1.44 s (1.01–1.78) |
+| ESP received both SubscribeResponses | 3.26 s (2.26–5.06) | 2.84 s (2.59–3.11) |
+| Host verified a fresh lamp On from the ESP | 5.92 s (5.65–8.30) | 5.64 s (4.87–6.44) |
+
+On three polling boots the ESP sent both cached CASE requests before OpenThread had a route to the peers. The route appeared shortly afterward, and the requests went through on Matter's retransmission about two seconds later. The modified firmware saw zero missing-route drops across seven boots. These are observations from the standalone C6 image with the border router and peers already online. Timing a whole-mesh power cut or a physical ESPHome boot requires a separate measurement.
+
+In two additional fallback boots, the ESP received both subscription confirmations at 1.80 s and 2.25 s. With Matter Server still offline, the probe waited for the ESP to report an expired boot grace, then sent the gesture. The host verified the lamp command at 12.60 s and 12.84 s, respectively.
+
+The [persistent-memory experiment](results/c6-persistence.md) compares Thread locator restoration, discovery, resuming the original button subscription, early absolute On commands, and event-checkpoint flash wear.
+
 ## Run against a test XIAO
 
 Use a dedicated Home Assistant fabric with Matter Server running in a named local Podman container. Connect the XIAO to that fabric through its Thread border router and configure the Matter Reflex integration. Keep HA and the border router in processes independent of Matter Server. The test host interface must support multicast discovery and routed IPv6 between the Thread board and the virtual peers. The peers listen on UDP ports 5570 and 5571. Enable test certificates on the lab Matter Server (the pinned JS server accepts `--enable-test-net-dcl`). The HA instance needs editable automations, as in the default `automation: !include automations.yaml` configuration.

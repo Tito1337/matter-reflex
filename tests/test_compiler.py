@@ -32,6 +32,23 @@ def lookup(name):
     }[name]
 
 
+def test_toggle_selection_is_per_target():
+    endpoints = {
+        "event.remote_button": lookup("event.remote_button"),
+        "light.native": Endpoint(40, 1, light_power_ops=frozenset({14})),
+        "light.legacy": Endpoint(41, 1, light_power_ops=frozenset({0, 1, 2})),
+    }
+    cfg = sample()
+    cfg["actions"] = [
+        {
+            "action": "light.toggle",
+            "target": {"entity_id": ["light.native", "light.legacy"]},
+        }
+    ]
+    rows = compile_automation("mixed", cfg, endpoints.__getitem__)
+    assert {row.target: row.op for row in rows} == {40: 14, 41: 2}
+
+
 def test_pilot_wire():
     (row,) = compile_automation("pilot", sample(), lookup)
     assert (row.event, row.presses, row.op, row.value) == (6, 2, 3, 178)
