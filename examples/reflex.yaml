@@ -1,6 +1,6 @@
 # Add Reflex to a Thread node. The device configuration owns its board and pins.
 substitutions:
-  reflex_source: github://Tito1337/matter-reflex@23a5eb1138eb976041ff415d0aca847028444e4b
+  reflex_source: github://Tito1337/matter-reflex@f19fedae2c1980cc25f077b85c01b53c41e3fcb9
 
 esphome:
   min_version: 2026.11.0
