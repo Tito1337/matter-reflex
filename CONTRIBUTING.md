@@ -23,7 +23,7 @@ tools/check-esphome
 tools/check-esphome compile extend-node
 ```
 
-To test a XIAO layout, replace `extend-node` with `xiao-esp32c6-ota` or `xiao-esp32c6-existing-ota`. For a build you intend to flash, use your own secrets and the [installation guide](examples/README.md). To add Reflex to a project of your own, follow the [component guide](docs/esphome-component.md).
+To validate the fresh-board configuration, run `tools/check-esphome config xiao-esp32c6`. To test an OTA layout, replace `extend-node` with `xiao-esp32c6-ota` or `xiao-esp32c6-existing-ota`. For a build you intend to flash, use your own secrets and the [installation guide](examples/README.md). To add Reflex to a project of your own, follow the [component guide](docs/esphome-component.md).
 
 ## Where to make a change
 
@@ -38,6 +38,8 @@ To test a XIAO layout, replace `extend-node` with `xiao-esp32c6-ota` or `xiao-es
 Send feature and bug-fix pull requests to `main`. ESPHome is the firmware development path. To reproduce the last standalone baseline in a separate checkout, run `git worktree add --detach ../matter-reflex-standalone standalone-v1.3.0`.
 
 The standalone build remains available during migration. Before retiring it, record a fresh XIAO commissioning, an encrypted OTA update over Thread that preserves the same node and rules, and a physical button controlling its target during a Matter Server outage on that installation. [Hardware procedure and observations](examples/README.md#thread-ota)
+
+The ESPHome firmware exposes encrypted native-API management; HTTP management and its transfer-key provisioning have been removed. The standalone emulator uses the encrypted Matter rules cluster. Its disposable controller loads `tests/lab/reflex-cluster.mjs` before constructing its model map, so the firmware regression exercises native frame writes, status, readiness and result events without a separate management server.
 
 ## Check the integration and shared engine
 
@@ -91,4 +93,4 @@ For local builds and the hardware verification sequence see the [XIAO profiles](
 
 Include the versions of Home Assistant Core, Matter Server, the integration, and the firmware. Give the source and target device models, describe the gesture, and explain what you expected and what actually happened. A minimal automation with anonymized entity IDs often helps others reproduce the problem. For an outage, include the Reflex mode during the press and the change in the execution counter. [Open an issue](https://github.com/Tito1337/matter-reflex/issues)
 
-Keep flash dumps, HMAC keys, Thread datasets, and pairing codes out of issues and commits. They can expose private information. Redact device identifiers and household names from log excerpts as well. The [troubleshooting guide](docs/troubleshooting.md) lists the observations to include.
+Keep flash dumps, API keys, Thread datasets, and pairing codes out of issues and commits. They can expose private information. Redact device identifiers and household names from log excerpts as well. The [troubleshooting guide](docs/troubleshooting.md) lists the observations to include.

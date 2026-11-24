@@ -167,14 +167,7 @@ USB `status` command shows `fabrics=1` and a node ID. Close the browser
 console when you finish. This firmware commissions the board over Thread.
 [Home Assistant WebSocket API](https://contributors.home-assistant.io/core/internals/websocket-api/)
 
-If the Matter Reflex setup form asks for a transfer key, use your password
-manager to generate **64 random hexadecimal digits** (32 bytes). Enter the
-key at the hidden USB prompt, then enter the same key in the form. The first
-authenticated status request binds the key to the node and its fabric.
-
-```sh
-./dev usb python /work/tools/board_console.py key
-```
+The standalone baseline uses the encrypted Matter rules cluster. If your Matter Server cannot expose that cluster, migrate the commissioned board to the [ESPHome management profile](../examples/README.md#upgrade-a-commissioned-standalone-board), add its encrypted ESPHome connection, and select it in Matter Reflex. HTTP transfer and USB key provisioning have been removed.
 
 ## Lease and rule execution
 
@@ -210,14 +203,14 @@ Home Assistant listens for changes to Active, Executions and the rules hash
 through the server’s existing subscription. It reads a snapshot on connection
 or reconnection and verifies rule transfers. On controllers that cannot
 forward all three attributes, it also refreshes the snapshot every five
-minutes, falling back to the authenticated Thread channel when configured.
+minutes, using the encrypted ESPHome connection when configured.
 A failed status check retries after one minute. The status display can lag on
 these controllers; USB provides a current reading during an outage. Status
 reads and subscription reports do not renew the lease.
 
 The high bit of the operation byte in a rule selects direct ESP handling. Existing fallback images are byte-for-byte unchanged. Receivers predating direct rules reject the flagged operation. Direct rules share the existing peer subscriptions and ignore the HA lease once the fabric identity and source subscription are established. Priming reports are discarded in both modes.
 
-Attributes 5–8 return four pages of the execution journal. The authenticated HTTP channel exposes the same data at `/v1/activity`; the encrypted ESPHome exchange includes it as `journal`. Each result consists of 16 hex digits of ESP run ID, eight of rule ID, and four of command status. Results for the same button event or sensor report share a run ID and one lease decision. Each direct or fallback target contributes a result. Attribute 9 and the management snapshot’s `ready` field contain a 32-bit mask. Bit zero corresponds to the first row in the installed image. A set bit identifies a direct rule with an established source subscription. HA checks the mask against the verified image hash before delegating. HA verifies the image hash and maps rule IDs to automation entities and targets. The journal retains the last 32 target results.
+Attributes 5–8 return four pages of the execution journal. The encrypted ESPHome exchange includes the same data as `journal`. Each result consists of 16 hex digits of ESP run ID, eight of rule ID, and four of command status. Results for the same button event or sensor report share a run ID and one lease decision. Each direct or fallback target contributes a result. Attribute 9 and the management snapshot’s `ready` field contain a 32-bit mask. Bit zero corresponds to the first row in the installed image. A set bit identifies a direct rule with an established source subscription. HA checks the mask against the verified image hash before delegating. HA verifies the image hash and maps rule IDs to automation entities and targets. The journal retains the last 32 target results.
 
 Endpoint 1 hosts the rules cluster and its vendor-specific `RuleExecuted`
 event. Fields 0 through 3 contain the rule ID, local node ID, source event

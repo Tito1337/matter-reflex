@@ -10,8 +10,8 @@ Merge the following into your existing YAML. The management package lets Home As
 
 ```yaml
 packages:
-  reflex: github://Tito1337/matter-reflex/examples/reflex.yaml@14d9e91fae9826566f1faa1e6f9701b5b6b17f2d
-  management: github://Tito1337/matter-reflex/examples/encrypted-api.yaml@14d9e91fae9826566f1faa1e6f9701b5b6b17f2d
+  reflex: github://Tito1337/matter-reflex/examples/reflex.yaml@70502fffa47de275665efb7484baf1098e541c8b
+  management: github://Tito1337/matter-reflex/examples/encrypted-api.yaml@70502fffa47de275665efb7484baf1098e541c8b
 
 substitutions:
   reflex_api_key: !secret reflex_api_key
@@ -24,6 +24,8 @@ matter:
 ```
 
 The package loads the pinned community Matter component and the Reflex external component. If you already import either from Git, consolidate those imports so your node uses one version of each. The package enables IPv6 and leaves your GPIOs, sensors, radio settings and OTA layout under your control. The Home Assistant integration currently discovers the device using development vendor ID `0xFFF1` and the Matter product name `Matter Reflex`. Reflex sets that product name for the whole node. Commission the node on the same Home Assistant Matter fabric as the source sensors, buttons and targets. [XIAO commissioning and transfer setup](../examples/README.md)
+
+The Reflex integration automatically disables the unused Identify buttons on endpoints 1 and 2 and the legacy outlet switch on endpoint 2 in Home Assistant. These are internal protocol endpoints: the switch is not a Reflex enable/disable control, and the buttons have no identification effect configured. Their Matter clusters remain available for commissioning and compatibility with older controllers. Entities on your own endpoints and Reflex diagnostics are unaffected.
 
 For development from a checkout, use `!include reflex.yaml` and set `reflex_source: ../components` in a YAML file beside the package in `examples/`. The [complete configuration](../examples/extend-node.yaml) uses local paths for Reflex and its example consumer. The [ESPHome external components documentation](https://esphome.io/components/external_components/) describes the directory layout and Git source syntax.
 
@@ -50,7 +52,6 @@ matter_reflex:
 | `ready_peers`, `required_peers` | Diagnostic sensors for the subscribed and required peer counts. One node can serve several rules. |
 | `on_rule_result` | One callback per target command attempt. A gesture that targets two lamps can produce two results with the same source event number. |
 | `api_rules` | Enables rule exchange with an encrypted native API and `api.reboot_timeout: 0s`. The management package provides the configuration and API action. |
-| `transfer_key` | Optional 64-digit hexadecimal secret for the authenticated HTTP rule-transfer fallback. |
 
 The callback supplies a 32-bit rule ID, a 64-bit Matter source event number and a 16-bit status. Zero indicates success. Local errors include `0x100` for a missing session, `0x101` for an unknown target state and `0x102` for a transport error. Button results carry the originating node’s Matter event number. Sensor attribute reports have no event number and use zero in this field. [Troubleshooting](troubleshooting.md)
 
