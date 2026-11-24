@@ -4,7 +4,6 @@ import csv
 import json
 import os
 import re
-import secrets
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -44,12 +43,6 @@ def boot_milestones(lines):
 class EmulatedBoard:
     def __init__(self, cleanup, start, prefix, ha):
         self.run = Path(cleanup.enter_context(TemporaryDirectory(prefix="reflex-emu-")))
-        self.key = secrets.token_hex(32)
-        with os.fdopen(
-            os.open(self.run / "http-key", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600),
-            "w",
-        ) as f:
-            f.write(self.key)
         self.name = prefix + "mesh"
         firmware = str(ROOT / "firmware/build") + ":/firmware:ro,z"
         scripts = str(ROOT / "tests/lab/c6") + ":/recipe:ro,z"

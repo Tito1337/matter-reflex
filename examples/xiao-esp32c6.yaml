@@ -1,11 +1,10 @@
 substitutions:
   reflex_source: ../components
+  reflex_api_key: !secret reflex_api_key
 
 packages:
   board: !include xiao-base.yaml
+  management: !include encrypted-api.yaml
 
 openthread:
   tlv: !secret thread_tlv
-
-matter_reflex:
-  transfer_key: !secret reflex_transfer_key

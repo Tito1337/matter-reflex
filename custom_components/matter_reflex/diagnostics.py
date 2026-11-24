@@ -20,7 +20,7 @@ async def async_get_config_entry_diagnostics(
     status = runtime.status if runtime is not None else None
     transport = None
     if runtime is not None:
-        transport = entry.data.get("mode", "http") if runtime.channel is not None else "matter"
+        transport = "esphome" if runtime.channel is not None else "matter"
 
     return {
         "rules_transport": transport,

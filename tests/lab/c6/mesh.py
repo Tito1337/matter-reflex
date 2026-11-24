@@ -112,7 +112,6 @@ async def main():
             )
             await asyncio.wait_for(booted.wait(), 45)
             if provision:
-                await send(board, b"key " + (RUN / "http-key").read_bytes())
                 await send(board, b"dataset " + dataset.result())
                 provision = False
             while not (RUN / "power-off").exists():

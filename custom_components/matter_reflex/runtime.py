@@ -8,6 +8,7 @@ from time import monotonic
 from homeassistant.components.automation.const import EVENT_AUTOMATION_RELOADED
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import CoreState, callback
+from homeassistant.exceptions import ConfigEntryError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.device_registry import EVENT_DEVICE_REGISTRY_UPDATED
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -24,7 +25,6 @@ from .ownership import OwnershipImages, lease_for
 from .status import RETRY_INTERVAL, StatusMonitor
 from .transport import (
     CHANNEL_ERRORS,
-    Channel,
     ESPHomeChannel,
     ReflexError,
     client_for,
@@ -41,19 +41,18 @@ class Runtime:
         self.hass = hass
         self.entry = entry
         self.node = entry.data["node_id"]
-        # Entries created before transport negotiation used the authenticated
-        # Thread channel for rules and have a key but no mode field.
-        mode = entry.data.get("mode", "http" if "key" in entry.data else "matter")
+        mode = entry.data.get("mode", "legacy" if "key" in entry.data else "matter")
         if mode == "matter":
             self.channel = None
-        elif mode == "http":
-            self.channel = Channel(hass, self.node, entry.data["key"])
         elif mode == "esphome":
             self.channel = ESPHomeChannel(
                 hass, self.node, entry.data["fabric"], entry.data["esphome_entry_id"]
             )
         else:
-            raise ReflexError("Unsupported Reflex rules transport")
+            raise ConfigEntryError(
+                "This rules transport is no longer supported. Add the encrypted "
+                "ESPHome board, then reconfigure Matter Reflex to select it."
+            )
         self.acls = AclManager(
             Store(
                 hass,

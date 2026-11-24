@@ -9,24 +9,24 @@
           "node": "Nœud Matter"
         }
       },
-      "fallback": {
-        "title": "Configurer le transfert des règles sur Thread",
-        "description": "Sélectionnez la carte ESPHome chiffrée ou saisissez la clé HTTP hexadécimale de 64 caractères. Le bail utilise Matter.",
+      "esphome": {
+        "title": "Configurer le transfert chiffré des règles",
+        "description": "Sélectionnez la carte ESPHome avec une API chiffrée. Le bail et les commandes aux appareils utilisent Matter.",
         "data": {
-          "key": "Clé du canal Thread",
           "esphome_entry_id": "Carte ESPHome chiffrée"
         }
       }
     },
     "error": {
-      "cannot_connect": "Vérifiez l’identité de la carte, la clé et la connectivité Thread.",
-      "invalid_input": "Sélection ou clé incorrecte.",
+      "cannot_connect": "Vérifiez l’identité de la carte, sa connexion ESPHome chiffrée et la connectivité Thread.",
+      "invalid_input": "Sélection incorrecte.",
       "matter_unavailable": "Impossible de joindre le nœud via Matter. Vérifiez sa disponibilité et réessayez.",
       "lease_unsupported": "Le serveur Matter ne peut pas renouveler le bail avec ce firmware. Vérifiez que la carte utilise le firmware Reflex 1.3.0 ou ultérieur et que ce contrôleur y dispose des droits d’administration. Après une mise à jour du firmware, relancez l’interview de la carte dans le serveur Matter pour détecter le cluster Actions, puis réessayez."
     },
     "abort": {
       "no_nodes": "Aucun nœud Matter Reflex commissionné sur la fabric.",
-      "already_configured": "Ce nœud est déjà configuré."
+      "already_configured": "Ce nœud est déjà configuré.",
+      "no_esphome": "Ajoutez la carte à l’intégration ESPHome avec une API chiffrée et l’action reflex_exchange, puis réessayez."
     }
   },
   "issues": {

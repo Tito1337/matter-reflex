@@ -12,7 +12,7 @@ from . import native
 from .const import LEASE_SECONDS
 from .transport import CHANNEL_ERRORS, ReflexError, is_reflex
 
-# Older servers may only provide these vendor values through HTTP, or expose
+# Older servers may only provide these vendor values through ESPHome, or expose
 # them for reads without forwarding changes. Bound the staleness on that path.
 UNCONFIRMED_INTERVAL = 300
 RETRY_INTERVAL = 60
@@ -221,7 +221,7 @@ class StatusMonitor:
         if not self.online:
             return
         # subscribe_events reports a single value; node_updated may also carry
-        # old cached fields. Never replace a newer HTTP snapshot with that cache.
+        # old cached fields. Never replace a newer API snapshot with that cache.
         key = native.STATUS_PATHS[path]
         try:
             native.validate_status_value(key, value)
@@ -257,7 +257,7 @@ class StatusMonitor:
                 latest = await self.runtime.read_status(client)
             if generation != self.generation:
                 raise ReflexError("Matter connection changed during status refresh")
-            # A newer report can arrive while the HTTP/IM read is in flight.
+            # A newer report can arrive while the API/IM read is in flight.
             read_hash = latest["hash"]
             latest = {
                 **latest,
@@ -328,7 +328,7 @@ class StatusMonitor:
                         delay = (
                             min(delay, readiness_delay) if delay else readiness_delay
                         )
-                    # An immediate authenticated HTTP read during an outage can
+                    # An immediate encrypted ESPHome read during an outage can
                     # still see the final HA lease. Observe its expiry once.
                     if self.check_expiration:
                         self.check_expiration = False

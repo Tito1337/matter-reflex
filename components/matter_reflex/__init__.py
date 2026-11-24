@@ -1,7 +1,5 @@
 """Run the Matter Reflex peer and lease engine inside ESPHome."""
 
-import re
-
 from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
@@ -10,7 +8,6 @@ from esphome.components import binary_sensor, sensor
 from esphome.components.esp32 import (
     add_idf_sdkconfig_option,
     add_src_cmake,
-    include_builtin_idf_component,
 )
 from esphome.components.matter.types import MatterComponent
 from esphome.components.network import require_ipv4
@@ -24,13 +21,6 @@ DEPENDENCIES = ["matter", "openthread"]
 ReflexComponent = cg.esphome_ns.namespace(DOMAIN).class_("ReflexComponent", cg.Component)
 
 
-def transfer_key(value):
-    value = cv.string_strict(value)
-    if not re.fullmatch("[0-9a-fA-F]{64}", value):
-        raise cv.Invalid("transfer_key requires 64 hexadecimal digits")
-    return value
-
-
 CONFIG_SCHEMA = cv.All(
     cv.Schema({
         cv.GenerateID(): cv.declare_id(ReflexComponent),
@@ -40,7 +30,6 @@ CONFIG_SCHEMA = cv.All(
         cv.Optional("required_peers"): sensor.sensor_schema(accuracy_decimals=0, entity_category="diagnostic"),
         cv.Optional("active"): binary_sensor.binary_sensor_schema(),
         cv.Optional("on_rule_result"): automation.validate_automation(single=True),
-        cv.Optional("transfer_key"): cv.sensitive(transfer_key),
     }).extend(cv.COMPONENT_SCHEMA),
     # The pinned Matter SDK compiles IPv4 address helpers even on a Thread node.
     require_ipv4(DOMAIN),
@@ -101,6 +90,3 @@ async def to_code(config):
         'target_link_options(${COMPONENT_LIB} PUBLIC '
         '"-Wl,--wrap=_ZN4chip18CASESessionManager4InitEPNS_6System5LayerERKNS_24CASESessionManagerConfigE")'
     )
-    include_builtin_idf_component("esp_http_server")
-    if "transfer_key" in config:
-        cg.add(component.set_transfer_key(config["transfer_key"]))

@@ -73,7 +73,7 @@ def configure_ha(server_address):
     commissioning = json.load(sys.stdin)
     asyncio.run(commission(base, commissioning["codes"]))
     entry_id = None
-    if commissioning["key"]:
+    if commissioning["with_board"]:
         flow = session.post(flow_url, json={"handler": "matter_reflex"}, timeout=30)
         flow.raise_for_status()
         form = flow.json()
@@ -88,13 +88,6 @@ def configure_ha(server_address):
             flow_url + "/" + form["flow_id"], json={"node": choice[0]}, timeout=45
         )
         response.raise_for_status()
-        if response.json().get("step_id") == "fallback":
-            response = session.post(
-                flow_url + "/" + form["flow_id"],
-                json={"key": commissioning["key"]},
-                timeout=45,
-            )
-            response.raise_for_status()
         result = response.json()
         if result["type"] != "create_entry":
             raise RuntimeError(
@@ -335,7 +328,10 @@ def smoke(with_board=False, mode="fallback", cold_boots=0, toggle=False):
         start(
             "server",
             matter,
-            [] if board else ["--ip", server_ip],
+            [
+                "--volume", mount,
+                "--env", "NODE_OPTIONS=--import=/app/reflex-lab/reflex-cluster.mjs",
+            ] if board else ["--ip", server_ip],
             [
                 "--primary-interface",
                 "tap0" if board else "eth0",
@@ -395,7 +391,7 @@ def smoke(with_board=False, mode="fallback", cold_boots=0, toggle=False):
             input=json.dumps(
                 {
                     "codes": codes,
-                    "key": board.key if board else None,
+                    "with_board": bool(board),
                     "mode": mode,
                     "toggle": toggle,
                 }

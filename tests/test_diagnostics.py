@@ -17,13 +17,13 @@ from custom_components.matter_reflex.runtime import Runtime
     ("transport", "matches", "acl_synced", "expected_sync"),
     [
         ("matter", True, True, True),
-        ("http", False, True, False),
+        ("esphome", False, True, False),
         ("matter", True, False, False),
     ],
 )
 async def test_diagnostics_allowlist(transport, matches, acl_synced, expected_sync):
     runtime = Runtime.__new__(Runtime)
-    runtime.channel = object() if transport == "http" else None
+    runtime.channel = object() if transport == "esphome" else None
     runtime.status = {
         "hash": "unpublished SHA",
         "active": True,

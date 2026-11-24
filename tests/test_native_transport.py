@@ -5,8 +5,11 @@ from dataclasses import asdict
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import aiohttp
 import pytest
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import CoreState
+from homeassistant.exceptions import ConfigEntryError
 from matter_server.common.errors import InvalidArguments, SDKStackError
 
 from custom_components.matter_reflex import (
@@ -330,7 +333,7 @@ async def test_native_transfer_is_chunked_and_verified_per_frame():
 
 
 @pytest.mark.asyncio
-async def test_http_mode_still_prefers_matter_status_then_falls_back():
+async def test_esphome_mode_prefers_matter_status_then_uses_encrypted_api():
     runtime = Runtime.__new__(Runtime)
     runtime.direct_mask = 0
     runtime.node, runtime.channel = (
@@ -369,15 +372,29 @@ def flow_with_node():
         title="Matter",
         runtime_data=SimpleNamespace(adapter=SimpleNamespace(matter_client=client)),
     )
+    api_entry = SimpleNamespace(
+        entry_id="bureau",
+        title="Bureau",
+        domain="esphome",
+        state=ConfigEntryState.LOADED,
+        data={"noise_psk": "configured"},
+        runtime_data=SimpleNamespace(
+            available=True, device_info=SimpleNamespace(name="bureau-reflex")
+        ),
+    )
     flow.hass = SimpleNamespace(
         config_entries=SimpleNamespace(
-            async_loaded_entries=lambda domain: [entry] if domain == "matter" else []
-        )
+            async_loaded_entries=lambda domain: (
+                [entry] if domain == "matter" else [api_entry]
+            )
+        ),
+        services=SimpleNamespace(has_service=Mock(return_value=True)),
     )
     flow.async_set_unique_id = AsyncMock()
     flow._abort_if_unique_id_configured = Mock()
     flow.async_create_entry = Mock(side_effect=lambda **kwargs: kwargs)
     flow.async_show_form = Mock(side_effect=lambda **kwargs: kwargs)
+    flow.async_abort = Mock(side_effect=lambda **kwargs: kwargs)
     return flow, client
 
 
@@ -397,10 +414,10 @@ async def test_probe_chooses_native_without_a_key(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_only_a_rejected_vendor_probe_asks_for_authenticated_fallback(
+async def test_rejected_vendor_probe_selects_only_encrypted_esphome(
     monkeypatch,
 ):
-    flow, client = flow_with_node()
+    flow, _ = flow_with_node()
     monkeypatch.setattr(native, "probe", AsyncMock(side_effect=TimeoutError))
     assert (await flow.async_step_user({"node": "fabric/31"}))["errors"] == {
         "base": "matter_unavailable"
@@ -408,16 +425,19 @@ async def test_only_a_rejected_vendor_probe_asks_for_authenticated_fallback(
     monkeypatch.setattr(
         native, "probe", AsyncMock(side_effect=ReflexError("unknown cluster"))
     )
-    assert (await flow.async_step_user({"node": "fabric/31"}))["step_id"] == "fallback"
-    key = "12" * 32
+    form = await flow.async_step_user({"node": "fabric/31"})
+    assert form["step_id"] == "esphome"
+    assert {str(key) for key in form["data_schema"].schema} == {"esphome_entry_id"}
     validated = AsyncMock()
-    monkeypatch.setattr(config_flow, "client_for", Mock(return_value=client))
     monkeypatch.setattr(
-        config_flow, "Channel", Mock(return_value=SimpleNamespace(status=validated))
+        config_flow,
+        "ESPHomeChannel",
+        Mock(return_value=SimpleNamespace(status=validated)),
     )
-    result = await flow.async_step_fallback({"key": key})
-    validated.assert_awaited_once_with(client)
-    assert result["data"]["mode"] == "http" and result["data"]["key"] == key
+    result = await flow.async_step_esphome({"esphome_entry_id": "bureau"})
+    validated.assert_awaited_once_with(None)
+    assert result["data"]["mode"] == "esphome"
+    assert "key" not in result["data"]
 
 
 @pytest.mark.asyncio
@@ -483,3 +503,61 @@ async def test_native_activity_distinguishes_unsupported_from_incomplete_reads()
     )
     with pytest.raises(ReflexError, match="journal is unavailable"):
         await native.read_activity(client, 31)
+
+
+@pytest.mark.asyncio
+async def test_missing_encrypted_board_has_actionable_setup_abort(monkeypatch):
+    flow, client = flow_with_node()
+    entry = flow.hass.config_entries.async_loaded_entries("matter")[0]
+    flow.hass.config_entries.async_loaded_entries = lambda domain: (
+        [entry] if domain == "matter" else []
+    )
+    monkeypatch.setattr(
+        native, "probe", AsyncMock(side_effect=ReflexError("unknown cluster"))
+    )
+    result = await flow.async_step_user({"node": "fabric/31"})
+    assert result == {"reason": "no_esphome"}
+    client.send_device_command.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "legacy", [{"mode": "http", "key": "retired"}, {"key": "retired"}]
+)
+def test_retired_transport_requires_reconfiguration_instead_of_silent_fallback(legacy):
+    entry = SimpleNamespace(data={"node_id": 31, **legacy})
+    with pytest.raises(ConfigEntryError, match="reconfigure Matter Reflex"):
+        Runtime(Mock(), entry)
+
+
+@pytest.mark.asyncio
+async def test_unreachable_esphome_board_does_not_save_reconfiguration(monkeypatch):
+    flow, _ = flow_with_node()
+    flow._selection = {"node_id": 31, "fabric": 42, "matter_entry_id": "fabric"}
+    monkeypatch.setattr(
+        config_flow,
+        "ESPHomeChannel",
+        Mock(
+            return_value=SimpleNamespace(
+                status=AsyncMock(side_effect=ReflexError("wrong owner"))
+            )
+        ),
+    )
+    form = await flow.async_step_esphome({"esphome_entry_id": "bureau"})
+    assert form["step_id"] == "esphome"
+    assert form["errors"] == {"base": "cannot_connect"}
+    flow.async_create_entry.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_matter_connection_error_uses_encrypted_status_channel():
+    runtime = Runtime.__new__(Runtime)
+    runtime.node, runtime.direct_mask = 31, 1
+    status = {"ready": 1}
+    runtime.channel = SimpleNamespace(status=AsyncMock(return_value=status))
+    client = SimpleNamespace(
+        read_attribute=AsyncMock(
+            side_effect=aiohttp.ClientConnectionError("socket closed")
+        )
+    )
+    assert await runtime.read_status(client) == status
+    runtime.channel.status.assert_awaited_once_with(client)

@@ -1,5 +1,4 @@
 #include "matter_reflex.h"
-#include "reflex_http.h"
 #include "reflex_peers.h"
 #include "reflex_runtime.h"
 
@@ -128,11 +127,6 @@ void ReflexComponent::setup() {
   if (ready_sensor_ || required_sensor_) {
     publish_readiness();
     set_interval(5000, [this]() { publish_readiness(); });
-  }
-  if (reflex_http_start(transfer_key_) != ESP_OK) {
-    ESP_LOGE(TAG, "Could not start the authenticated rule transfer service");
-    mark_failed();
-    return;
   }
   ESP_LOGI(TAG, "Reflex runtime started at boot %llu ms, reset reason %d", boot_ms(), static_cast<int>(esp_reset_reason()));
 }

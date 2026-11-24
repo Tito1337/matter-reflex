@@ -5,8 +5,8 @@ cd -- "$(dirname -- "$0")/.."
 mode=${1:-config}
 profile=${2:-extend-node}
 case "$mode" in config|compile) ;; *) echo "Expected config or compile" >&2; exit 2;; esac
-case "$profile" in extend-node|xiao-esp32c6-ota|xiao-esp32c6-existing-ota) ;;
-    *) echo "Expected extend-node, xiao-esp32c6-ota or xiao-esp32c6-existing-ota" >&2; exit 2;;
+case "$profile" in extend-node|xiao-esp32c6|xiao-esp32c6-ota|xiao-esp32c6-existing-ota) ;;
+    *) echo "Expected extend-node, xiao-esp32c6, xiao-esp32c6-ota or xiao-esp32c6-existing-ota" >&2; exit 2;;
 esac
 
 umask 077

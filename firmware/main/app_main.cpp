@@ -1,10 +1,7 @@
 #include "reflex_runtime.h"
-#include "reflex_http.h"
 
 #include <app/server/Server.h>
 #include <driver/usb_serial_jtag.h>
-#include <esp_log.h>
-#include <esp_mac.h>
 #include <esp_openthread_types.h>
 #include <lib/support/ThreadOperationalDataset.h>
 #include <mbedtls/platform_util.h>
@@ -19,21 +16,6 @@ namespace {
 using namespace chip;
 using namespace chip::DeviceLayer;
 using namespace esp_matter;
-constexpr char kTag[] = "matter_reflex";
-char instance[32];
-
-void advertise(System::Layer *layer, void *) {
-#if CHIP_DEVICE_CONFIG_ENABLE_THREAD_SRP_CLIENT
-    if (ThreadStackMgr().IsThreadAttached() && Server::GetInstance().GetFabricTable().FabricCount() == 1) {
-        // CHIP owns the OpenThread SRP callback and service table. Register
-        // through its API so commissioning-related re-advertising is safe.
-        auto err = ThreadStackMgr().AddSrpService(instance, "_matter-reflex._tcp", 5581, {}, {}, 0, 0);
-        if (err != CHIP_NO_ERROR) ESP_LOGD(kTag, "SRP registration pending");
-    }
-#endif
-    layer->StartTimer(System::Clock::Seconds16(20), advertise, nullptr);
-}
-
 bool pairing_window() {
     if (Server::GetInstance().GetFabricTable().FabricCount() != 0 || !ThreadStackMgr().IsThreadProvisioned()) return false;
     auto &window = Server::GetInstance().GetCommissioningWindowManager();
@@ -75,7 +57,6 @@ void command(char *line) {
     lock::ScopedChipStackLock lock(portMAX_DELAY);
     bool ok = false;
     if (!strncmp(line, "dataset ", 8)) ok = join(line+8);
-    else if (!strncmp(line, "key ", 4)) ok = reflex_http_set_key(line+4);
     else if (!strcmp(line, "pair")) ok = pairing_window();
     else if (!strcmp(line, "status")) {
         printf("thread=%s fabrics=%u node=%016llx active=%d rules=%s executions=%lu\n",
@@ -136,9 +117,6 @@ extern "C" void app_main() {
     };
     set_openthread_platform_config(&platform);
     ESP_ERROR_CHECK(esp_matter::start(device_event));
-    uint8_t mac[6];
-    ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_WIFI_STA));
-    snprintf(instance, sizeof(instance), "Matter Reflex %02x%02x%02x", mac[3], mac[4], mac[5]);
     {
         esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
         reflex_runtime::start();
@@ -146,8 +124,6 @@ extern "C" void app_main() {
         if (thread.IsThreadProvisioned() && !thread.IsThreadEnabled()) {
             ESP_ERROR_CHECK(thread.SetThreadEnabled(true) == CHIP_NO_ERROR ? ESP_OK : ESP_FAIL);
         }
-        advertise(&chip::DeviceLayer::SystemLayer(), nullptr);
     }
-    ESP_ERROR_CHECK(reflex_http_start());
     ESP_ERROR_CHECK(xTaskCreate(usb_console, "reflex_usb", 6144, nullptr, 4, nullptr) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
 }

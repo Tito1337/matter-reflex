@@ -16,7 +16,6 @@ namespace esphome::matter_reflex {
 class ReflexComponent : public Component {
  public:
   void register_endpoints(matter::MatterComponent *parent);
-  void set_transfer_key(const char *key) { transfer_key_ = key; }
   void set_ready_sensor(sensor::Sensor *sensor) { ready_sensor_ = sensor; }
   void set_required_sensor(sensor::Sensor *sensor) { required_sensor_ = sensor; }
   void set_active_sensor(binary_sensor::BinarySensor *sensor) { active_sensor_ = sensor; }
@@ -39,7 +38,6 @@ class ReflexComponent : public Component {
   sensor::Sensor *ready_sensor_{nullptr};
   sensor::Sensor *required_sensor_{nullptr};
   void publish_readiness();
-  const char *transfer_key_{nullptr};
 };
 
 }  // namespace esphome::matter_reflex

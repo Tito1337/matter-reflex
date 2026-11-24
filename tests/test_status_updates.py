@@ -122,7 +122,7 @@ async def test_pushed_values_and_lifecycle_never_replay_a_cached_snapshot():
 
 
 @pytest.mark.asyncio
-async def test_change_during_delayed_http_read_is_preserved_and_disconnect_invalidates_result():
+async def test_change_during_delayed_api_read_is_preserved_and_disconnect_invalidates_result():
     monitor, rt, client, _ = setup(channel=object())
     await monitor.refresh(client)
     entered, release = asyncio.Event(), asyncio.Event()
@@ -194,7 +194,7 @@ async def test_unobservable_board_is_refreshed_slowly_and_failed_status_is_unkno
 
 
 @pytest.mark.asyncio
-async def test_unsupported_or_removed_node_not_resurrected_by_cached_http(monkeypatch):
+async def test_unsupported_or_removed_node_not_resurrected_by_cached_api(monkeypatch):
     monitor, rt, client, _ = setup(channel=object())
     client._signal_event(EventType.NODE_REMOVED, 31, 31)
     task = asyncio.create_task(monitor.run())

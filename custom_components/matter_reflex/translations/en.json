@@ -9,24 +9,24 @@
           "node": "Matter node"
         }
       },
-      "fallback": {
-        "title": "Set up rules transfer over Thread",
-        "description": "Select the encrypted ESPHome board or enter the 64-character hexadecimal HTTP transfer key. The lease uses Matter.",
+      "esphome": {
+        "title": "Set up encrypted rules transfer",
+        "description": "Select the ESPHome board with an encrypted API. The lease and device commands use Matter.",
         "data": {
-          "key": "Thread channel key",
           "esphome_entry_id": "Encrypted ESPHome board"
         }
       }
     },
     "error": {
-      "cannot_connect": "Check the board identity, credentials and Thread connectivity.",
-      "invalid_input": "Invalid selection or key.",
+      "cannot_connect": "Check the board identity, encrypted ESPHome connection and Thread connectivity.",
+      "invalid_input": "Invalid selection.",
       "matter_unavailable": "Cannot reach the node over Matter. Check its availability and retry.",
       "lease_unsupported": "Matter Server cannot renew the lease with this firmware. Verify that the board runs Reflex firmware 1.3.0 or later and that this controller has administrator access to it. After a firmware update, re-interview the board in Matter Server to discover its Actions cluster, then retry."
     },
     "abort": {
       "no_nodes": "No commissioned Matter Reflex node found on the fabric.",
-      "already_configured": "This node is already configured."
+      "already_configured": "This node is already configured.",
+      "no_esphome": "Add the board to the ESPHome integration with an encrypted API and the reflex_exchange action, then retry."
     }
   },
   "issues": {

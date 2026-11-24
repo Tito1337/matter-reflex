@@ -2,8 +2,6 @@
 
 import asyncio
 import copy
-import hashlib
-import hmac
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -12,7 +10,7 @@ from homeassistant.core import CoreState
 
 from custom_components.matter_reflex.acl import ACL, AclManager, plan
 from custom_components.matter_reflex.runtime import Runtime
-from custom_components.matter_reflex.transport import Channel, ReflexError, signature
+from custom_components.matter_reflex.transport import ReflexError
 
 ADMIN = {"1": 5, "2": 2, "3": [112233], "4": None, "254": 2}
 SUBJECT = 0x100000000000011
@@ -135,15 +133,6 @@ def test_acl_refuses_ambiguous_admin_or_exhaustion(rows, limit):
         plan(rows, [], SUBJECT, {(1, 6, 3)}, 2, 3, limit, True)
 
 
-def test_hmac_protocol_separates_paths_and_response():
-    key, nonce, body = bytes(range(32)), "ab" * 16, b"10"
-    mac = signature(key, "REQ", nonce, "/v1/lease", body=body)
-    message = f"REQ\n{nonce}\n/v1/lease\n{hashlib.sha256(body).hexdigest()}"
-    assert mac == hmac.new(key, message.encode(), hashlib.sha256).hexdigest()
-    assert mac != signature(key, "REQ", nonce, "/v1/rules", body=body)
-    assert mac != signature(key, "RES", nonce, "/v1/lease", "200", body=body)
-
-
 @pytest.mark.asyncio
 async def test_absent_old_node_does_not_block_remaining_cleanup():
     client, store = Device(), MemoryStore()
@@ -172,30 +161,6 @@ async def test_final_snapshot_after_persisting_intent():
         await acl.reconcile(client, {15: {(1, 6, 3)}}, False)
     assert client.writes == 0
     assert store.value == {}
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "failure",
-    [
-        ReflexError("Reflex HTTP status 404"),
-        ReflexError("Unauthenticated Reflex response"),
-        OSError(),
-    ],
-)
-async def test_cached_address_can_move_to_another_thread_address(failure):
-    channel = Channel.__new__(Channel)
-    channel.address = "fd00::1"
-    channel.node_id = 12
-    channel._exchange = AsyncMock(side_effect=[failure, b"reply"])
-    client = SimpleNamespace(
-        get_node_ip_addresses=AsyncMock(
-            return_value=["fd00::1", "192.0.2.1", "::1", "fd00::2"]
-        )
-    )
-    assert await channel.request(client, "status") == b"reply"
-    assert channel.address == "fd00::2" and channel._exchange.await_count == 2
-    client.get_node_ip_addresses.assert_awaited_once_with(12, prefer_cache=False)
 
 
 @pytest.mark.asyncio

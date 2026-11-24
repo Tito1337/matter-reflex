@@ -13,7 +13,7 @@ import tty
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("status", "pair", "dataset", "key"))
+    parser.add_argument("command", choices=("status", "pair", "dataset"))
     args = parser.parse_args()
     message = args.command
     if message == "dataset":
@@ -27,12 +27,6 @@ def main():
                 raise SystemExit("Invalid dataset response") from None
         if not isinstance(value, str) or not re.fullmatch(r"(?:[0-9a-fA-F]{2}){1,254}", value):
             raise SystemExit("Invalid dataset response")
-        message += " " + value
-    elif message == "key":
-        value = (getpass.getpass("Rule transfer key (hex): ")
-                 if sys.stdin.isatty() else sys.stdin.readline()).strip()
-        if not re.fullmatch(r"[\da-fA-F]{64}", value):
-            raise SystemExit("Invalid provisioning key")
         message += " " + value
     # Linux CDC-ACM maps modem control transitions to the ESP32-C6 reset
     # circuit. Open the raw terminal without changing RTS/DTR for status reads.
