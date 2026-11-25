@@ -1,0 +1,10 @@
+# Defaults apply only when this package is selected. A missing field fails
+# native station validation. Simple substitutions preserve quoted strings.
+substitutions:
+  reflex_wifi_ssid: ""
+  reflex_wifi_password: "!"
+
+wifi:
+  ssid: ${reflex_wifi_ssid}
+  password: ${reflex_wifi_password}
+  reboot_timeout: 0s

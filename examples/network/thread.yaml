@@ -1,0 +1,2 @@
+openthread:
+  tlv: ${reflex_thread_tlv | default('REPLACEME', true)}

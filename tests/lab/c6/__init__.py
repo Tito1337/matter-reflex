@@ -40,6 +40,30 @@ def boot_milestones(lines):
     return {**stages, "route_drops": route_drops}
 
 
+def keep_backbone_responsive(tap, address):
+    # The TAP backend batches idle Wi-Fi traffic. Echoes stay on the backbone.
+    route = podman(
+        "exec",
+        tap,
+        "ip",
+        "-6",
+        "route",
+        "get",
+        address,
+    ).split()
+    router = route[route.index("via") + 1]
+    podman(
+        "exec",
+        "-d",
+        tap,
+        "sh",
+        "-c",
+        'exec ping -6 -I tap0 -i 0.05 "$1" >/dev/null',
+        "sh",
+        router,
+    )
+
+
 class EmulatedBoard:
     def __init__(self, cleanup, start, prefix, ha):
         self.run = Path(cleanup.enter_context(TemporaryDirectory(prefix="reflex-emu-")))
@@ -134,28 +158,7 @@ class EmulatedBoard:
             )
 
         eventually(reachable, "published and routable Thread address", timeout=150)
-        # The TAP backend batches idle Wi-Fi traffic. A link-local echo keeps
-        # the simulated backbone responsive without crossing the Thread mesh.
-        route = podman(
-            "exec",
-            prefix + "tap",
-            "ip",
-            "-6",
-            "route",
-            "get",
-            (self.run / "address").read_text(),
-        ).split()
-        router = route[route.index("via") + 1]
-        podman(
-            "exec",
-            "-d",
-            prefix + "tap",
-            "sh",
-            "-c",
-            'exec ping -6 -I tap0 -i 0.05 "$1" >/dev/null',
-            "sh",
-            router,
-        )
+        keep_backbone_responsive(prefix + "tap", (self.run / "address").read_text())
         print(
             "Reflex firmware reached through the virtual Thread border router.",
             flush=True,
@@ -165,7 +168,7 @@ class EmulatedBoard:
         def ready():
             if podman("inspect", "--format", "{{.State.Running}}", self.name) != "true":
                 raise RuntimeError(
-                    "Thread emulator exited while waiting for " + description
+                    "Reflex emulator exited while waiting for " + description
                 )
             path = self.run / "status.json"
             if path.exists():

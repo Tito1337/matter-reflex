@@ -1,0 +1,29 @@
+# A separately powered router representing the Thread radio on the HA host.
+esphome:
+  name: lab-ha-router
+  includes: [lab_radio.h, lab_router_mac.h]
+  on_boot:
+    priority: 1100
+    then:
+      - lambda: lab_router_mac();
+esp32:
+  board: seeed_xiao_esp32c6
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_LWIP_IPV6_NUM_ADDRESSES: "12"
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  reboot_timeout: 0s
+network:
+  enable_ipv6: true
+openthread:
+  tlv: !secret thread_tlv
+  border_router: {}
+interval:
+  - interval: 2s
+    then:
+      - lambda: lab_report_radio();

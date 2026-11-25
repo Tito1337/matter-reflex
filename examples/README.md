@@ -6,6 +6,8 @@ For a board that already runs ESPHome, [add Reflex to your existing node](../doc
 
 The pinned package below supports direct and fallback reflexes and uses encrypted ESPHome management. For development, build a local profile from the same checkout as the integration. Choose the fresh-board or commissioned-board profile in [Thread OTA](#thread-ota).
 
+For a fresh board on Wi-Fi, or to run Wi-Fi and Thread together on the same board, use the [credential-based network package](../docs/wifi-support.md).
+
 ## Install as an ESPHome package
 
 In your Device Builder configuration, import the board package at the revision below and set your own device name and secrets locally. This example is for a fresh board. For a commissioned standalone board follow the migration instructions below.

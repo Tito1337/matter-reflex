@@ -1,0 +1,66 @@
+# An independent Matter input. Its only network is the emulated 802.15.4 mesh.
+esphome:
+  name: lab-thread-contact
+  includes: [lab_contact.h, lab_radio.h]
+
+esp32:
+  board: seeed_xiao_esp32c6
+  framework:
+    type: esp-idf
+
+external_components:
+  - source: github://DavidvtWout/esphome-matter@547dbf85e029207b0fd01d198844002bd1f01a8c
+    components: [matter]
+network:
+  enable_ipv4: true
+  enable_ipv6: true
+openthread:
+  device_type: MTD
+  id: thread_mesh
+  tlv: !secret thread_tlv
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+binary_sensor:
+  - platform: template
+    id: contact
+matter:
+  product_name: ReflexLabThreadContact
+  vendor_id: 0xFFF1
+  product_id: 0x8000
+  endpoints:
+    1:
+      contact_sensor:
+        boolean_state: contact
+    2:
+      id: mesh_button
+      generic_switch:
+        with_features: [momentary_switch, momentary_switch_release, momentary_switch_long_press]
+script:
+  - id: press_button
+    then:
+      - matter.send_event:
+          path: mesh_button.switch.long_press
+          fields:
+            new_position: 1
+      - logger.log: "contact=p"
+interval:
+  - interval: 2s
+    then:
+      - lambda: lab_report_radio();
+  - interval: 200ms
+    then:
+      - lambda: |-
+          // Matter's Boolean State means true for closed.
+          if (!id(contact).has_state()) id(contact).publish_state(true);
+          char command;
+          while (usb_serial_jtag_read_bytes(&command, 1, 0) == 1) {
+            if (command == 's') {
+              id(thread_mesh).apply_poll_period(500);
+              ESP_LOGI("lab_contact", "contact=s");
+            }
+            if (command == 'p') id(press_button).execute();
+            if (command == 'c' || command == 'o') {
+              id(contact).publish_state(command == 'c');
+              ESP_LOGI("lab_contact", "contact=%c", command);
+            }
+          }

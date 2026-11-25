@@ -3,10 +3,15 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Reflex execution mode to test on virtual Thread
+        description: Reflex execution mode
         type: choice
         default: direct
         options: [direct, fallback, advanced, all]
+      transport:
+        description: Network topology for the firmware regression
+        type: choice
+        default: thread
+        options: [thread, wifi, combined]
 
 permissions:
   contents: read
@@ -29,4 +34,5 @@ jobs:
       - name: Run selected firmware regression
         env:
           REFLEX_MODE: ${{ inputs.mode }}
-        run: ./dev lab takeover --mode "$REFLEX_MODE"
+          REFLEX_TRANSPORT: ${{ inputs.transport }}
+        run: ./dev lab takeover --mode "$REFLEX_MODE" --transport "$REFLEX_TRANSPORT"

@@ -17,7 +17,7 @@ from esphome.coroutine import CoroPriority, coroutine_with_priority
 
 DOMAIN = "matter_reflex"
 AUTO_LOAD = ["binary_sensor", "sensor"]
-DEPENDENCIES = ["matter", "openthread"]
+DEPENDENCIES = ["matter"]
 ReflexComponent = cg.esphome_ns.namespace(DOMAIN).class_("ReflexComponent", cg.Component)
 
 
@@ -38,6 +38,8 @@ CONFIG_SCHEMA = cv.All(
 
 def final_validate(config):
     full_config = fv.full_config.get()
+    if "openthread" not in full_config and not (full_config.get("wifi") or {}).get("networks"):
+        raise cv.Invalid("Matter Reflex requires OpenThread or a Wi-Fi station network")
     if config["api_rules"]:
         api = full_config.get("api") or {}
         if not (api.get("encryption") or {}).get("key") or api["reboot_timeout"].total_milliseconds:
@@ -53,9 +55,26 @@ FINAL_VALIDATE_SCHEMA = final_validate
 
 
 @coroutine_with_priority(CoroPriority.FINAL)
-async def enable_reflex_clusters():
+async def finalize_matter_config():
     # The Matter component selects clusters after it resolves the user's endpoints.
     # Reflex registers endpoints in C++, so add their clusters after that selection.
+    if "wifi" in CORE.loaded_integrations and "openthread" in CORE.loaded_integrations:
+        # ESP-IDF's border-router netif requires 12 IPv6 address slots.
+        add_idf_sdkconfig_option("CONFIG_LWIP_IPV6_NUM_ADDRESSES", 12)
+        # Both IDF commissioning drivers default to root endpoint 0. The Thread
+        # dataset is already supplied to ESPHome's router. Only the Wi-Fi driver
+        # should register a Network Commissioning server on the root endpoint.
+        add_idf_sdkconfig_option("CONFIG_THREAD_NETWORK_COMMISSIONING_DRIVER", False)
+        # The mDNS service budget is shared with all delegated SRP records.
+        add_idf_sdkconfig_option("CONFIG_MDNS_MAX_SERVICES", 96)
+    if "wifi" in CORE.loaded_integrations:
+        # ESPHome's border router proxies SRP services into Espressif mDNS.
+        # Use the Wi-Fi DNS-SD backend for LAN and delegated Thread records.
+        add_src_cmake(
+            'set_source_files_properties(esphome/components/matter/matter_dnssd.cpp PROPERTIES '
+            'SKIP_PRECOMPILE_HEADERS ON COMPILE_DEFINITIONS REFLEX_WIFI_DNSSD COMPILE_OPTIONS '
+            '"-include;${CMAKE_CURRENT_SOURCE_DIR}/esphome/components/matter_reflex/wifi_dnssd.h")'
+        )
     for cluster in ("ACTIONS", "ON_OFF", "GROUPS", "IDENTIFY"):
         add_idf_sdkconfig_option(f"CONFIG_SUPPORT_{cluster}_CLUSTER", True)
 
@@ -82,7 +101,7 @@ async def to_code(config):
         )
     parent = await cg.get_variable(config["matter_id"])
     cg.add(component.register_endpoints(parent))
-    CORE.add_job(enable_reflex_clusters)
+    CORE.add_job(finalize_matter_config)
     add_idf_sdkconfig_option("CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER", True)
     add_idf_sdkconfig_option("CONFIG_CHIP_TASK_STACK_SIZE", 12288)
     cg.add_cmake_arg("PROJECT_VER_NUMBER", "6")

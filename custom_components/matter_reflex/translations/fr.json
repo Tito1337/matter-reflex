@@ -18,7 +18,7 @@
       }
     },
     "error": {
-      "cannot_connect": "Vérifiez l’identité de la carte, sa connexion ESPHome chiffrée et la connectivité Thread.",
+      "cannot_connect": "Vérifiez l’identité de la carte, sa connexion ESPHome chiffrée et la connectivité réseau.",
       "invalid_input": "Sélection incorrecte.",
       "matter_unavailable": "Impossible de joindre le nœud via Matter. Vérifiez sa disponibilité et réessayez.",
       "lease_unsupported": "Le serveur Matter ne peut pas renouveler le bail avec ce firmware. Vérifiez que la carte utilise le firmware Reflex 1.3.0 ou ultérieur et que ce contrôleur y dispose des droits d’administration. Après une mise à jour du firmware, relancez l’interview de la carte dans le serveur Matter pour détecter le cluster Actions, puis réessayez."

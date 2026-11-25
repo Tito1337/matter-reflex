@@ -12,5 +12,6 @@ esp32:
       CONFIG_PARTITION_TABLE_OFFSET: "0xC000"
 
 openthread:
+  device_type: FTD
   # ESPHome uses the active dataset already held in NVS.
   tlv: ""

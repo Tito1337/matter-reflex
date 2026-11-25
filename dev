@@ -34,6 +34,7 @@ case "$mode" in
             --volume "$project/components:/config/components:ro,z" \
             --volume "$project/firmware/partitions.csv:/config/firmware/partitions.csv:ro,z" \
             --volume reflex-esphome-cache:/cache --workdir /config \
+            --env ESPHOME_DEFAULT_COMPILE_PROCESS_LIMIT \
             ghcr.io/esphome/esphome:2026.11.0 "$@"
         ;;
     factory)
@@ -77,7 +78,6 @@ case "$mode" in
             exec 9>"$project/firmware/build/reflex-lab/run.lock"
             flock 9
             "${podman_cmd[@]}" build -f "$project/tools/Containerfile.ha" -t "$ha_image" "$project/tools"
-            (cd "$project" && tests/lab/c6/prepare)
         fi
         exec python3 "$project/tests/lab/lab.py" "$@"
         ;;

@@ -46,7 +46,14 @@ async def commission(base, codes):
 
 
 async def setup(
-    base, codes, *, sensors=False, mode="fallback", reflex_entry_id=None, toggle=False
+    base,
+    codes,
+    *,
+    sensors=False,
+    mode="fallback",
+    reflex_entry_id=None,
+    thread_contact=False,
+    toggle=False,
 ):
     if codes:
         await commission(base, codes)
@@ -70,12 +77,24 @@ async def setup(
                     ("lift", "REFLEXLABTARGETS", "cover", 5),
                 ]
             )
+        if thread_contact:
+            fixtures.extend(
+                [
+                    ("thread_contact", "ReflexLabThreadContact", "binary_sensor", 1),
+                    ("thread_button", "ReflexLabThreadContact", "event", 2),
+                ]
+            )
         for _ in range(90):
             devices = await request("config/device_registry/list")
             entities = await request("config/entity_registry/list")
             found = {}
             for name, serial, domain, endpoint in fixtures:
-                ids = {d["id"] for d in devices if d.get("serial_number") == serial}
+                field = (
+                    "model"
+                    if name in {"thread_button", "thread_contact"}
+                    else "serial_number"
+                )
+                ids = {d["id"] for d in devices if d.get(field) == serial}
                 ids.update(d["id"] for d in devices if d.get("via_device_id") in ids)
                 matches = [
                     e["entity_id"]
@@ -133,6 +152,33 @@ async def setup(
                 rules.append(
                     (case.sensor, trigger, case.service, found[case.target], case.data)
                 )
+        if thread_contact:
+            rules.append(
+                (
+                    "thread_contact",
+                    {
+                        "trigger": "state",
+                        "entity_id": found["thread_contact"],
+                        "to": "on",
+                    },
+                    "light.turn_on",
+                    found["light"],
+                    {},
+                )
+            )
+            rules.append(
+                (
+                    "thread_button",
+                    {
+                        "trigger": "event.received",
+                        "target": {"entity_id": found["thread_button"]},
+                        "options": {"event_type": ["long_press"]},
+                    },
+                    "light.turn_off",
+                    found["light"],
+                    {},
+                )
+            )
         for name, trigger, service, target, data in rules:
             rule_id = "matter_reflex_lab_" + name
             action = {"action": service, "target": {"entity_id": target}}
@@ -144,8 +190,11 @@ async def setup(
                 "triggers": [trigger],
                 "actions": [action],
             }
-            if reflex_entry_id and (mode != "fallback" or name == "long_press"):
-                rule["conditions"] = [condition(mode, name, reflex_entry_id)]
+            policy = {"thread_contact": "contact", "thread_button": "long_press"}.get(
+                name, name
+            )
+            if reflex_entry_id and (mode != "fallback" or policy == "long_press"):
+                rule["conditions"] = [condition(mode, policy, reflex_entry_id)]
             async with http.post(
                 base + "/api/config/automation/config/" + rule_id, json=rule
             ) as response:

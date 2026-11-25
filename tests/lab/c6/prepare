@@ -16,6 +16,9 @@ fi
 echo "$digest  $cache/$pkg.tgz" | sha256sum -c -
 tar -xzf "$cache/$pkg.tgz" -C "$cache" --strip-components=1 "$pkg/esp-emu"
 
+if [[ ${1:-thread} != thread ]]; then
+    exec python3 tests/lab/c6/prepare_esphome.py "$1"
+fi
 ./dev matter idf.py -C firmware build
 "${runtime[@]}" run --rm -v "$PWD/$cache:/fixture:z" -v "$PWD/tests/lab/c6:/recipe:ro,z" "$REFLEX_LAB_IDF_IMAGE" bash -ec '
     if [[ ! -f /fixture/router/CMakeLists.txt ]]; then

@@ -6,7 +6,7 @@ on:
         description: ESPHome example to compile
         type: choice
         default: xiao-esp32c6-ota
-        options: [xiao-esp32c6-ota, xiao-esp32c6-existing-ota, extend-node, all]
+        options: [xiao-esp32c6-ota, xiao-esp32c6-existing-ota, extend-node, thread, wifi, combined, all]
 
 permissions:
   contents: read
@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       matrix:
-        profile: ${{ fromJSON(inputs.profile == 'all' && '["xiao-esp32c6-ota","xiao-esp32c6-existing-ota","extend-node"]' || format('["{0}"]', inputs.profile)) }}
+        profile: ${{ fromJSON(inputs.profile == 'all' && '["xiao-esp32c6-ota","xiao-esp32c6-existing-ota","extend-node","thread","wifi","combined"]' || format('["{0}"]', inputs.profile)) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

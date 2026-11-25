@@ -4,7 +4,7 @@ Use the board-independent Reflex package when your ESPHome device already has a 
 
 ## Add the package
 
-Start with an ESP32-C6 running ESP-IDF and OpenThread. The tested board is the Seeed XIAO ESP32-C6. Your configuration supplies the board, name, Thread dataset, and Matter product ID. Check that you can dedicate endpoints 1 and 2 to Reflex. Endpoint 0 is the Matter root. Keep endpoint numbers stable for devices that have already been commissioned.
+The example below uses an ESP32-C6 running ESP-IDF and OpenThread. For a fresh XIAO on Wi-Fi, Thread, or both, use the [credential-selected configuration](wifi-support.md). The tested board is the Seeed XIAO ESP32-C6. Your configuration supplies the board, name, Thread dataset, and Matter product ID. Check that you can dedicate endpoints 1 and 2 to Reflex. Endpoint 0 is the Matter root. Keep endpoint numbers stable for devices that have already been commissioned.
 
 Merge the following into your existing YAML. The management package lets Home Assistant transfer rules through the encrypted ESPHome API over Thread. If your node already declares an API encryption key, use that same key here. Create local secrets for the active Thread dataset and API key before the first USB installation. [Obtaining the dataset](../firmware/README.md#join-the-thread-network)
 

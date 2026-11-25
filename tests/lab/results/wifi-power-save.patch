@@ -1,0 +1,166 @@
+--- a/tests/lab/peers.mjs
++++ b/tests/lab/peers.mjs
+@@ -13,7 +13,12 @@
+             longPressDelay: Millis(800), multiPressDelay: Millis(300),
+         },
+     }));
++    const events = [];
++    button.events.switch.multiPressComplete.on(payload => {
++        if (payload.totalNumberOfPressesCounted === 2) events.push(Number(process.hrtime.bigint() / 1000n));
++    });
+     return async function press(gesture) {
++        if (gesture === "bench-events") return events;
+         if (gesture !== "double" && gesture !== "long") throw new Error("Expected double or long");
+         for (let i = 0; i < (gesture === "double" ? 2 : 1); i++) {
+             await button.set({ switch: { currentPosition: 1 } });
+@@ -27,8 +32,10 @@
+
+ export async function addTargets(node) {
+     const commands = [];
++    const timed = [];
+     function record(context, command, value) {
+         const address = context.session?.peerAddress;
++        if (address) timed.push({us: Number(process.hrtime.bigint() / 1000n), sender: String(address.nodeId), command});
+         if (address) commands.push({ sender: String(address.nodeId), command, value });
+     }
+     class Lamp extends OnOffServer.with("Lighting") {
+@@ -54,6 +61,7 @@
+         },
+     }));
+     return {
++        timed() { return timed; },
+         snapshot() {
+             return { commands: [...commands], on: lamp.state.onOff.onOff,
+                 tilt: blind.state.windowCovering.targetPositionTiltPercent100ths };
+--- a/tests/lab/peer.mjs
++++ b/tests/lab/peer.mjs
+@@ -49,6 +49,8 @@
+                     fabrics: Object.keys(state.fabrics).length,
+                     code: node.lifecycle.isCommissioned ? undefined : state.pairingCodes.manualPairingCode };
+             } else if (button && ["double", "long"].includes(command)) await press(command);
++            else if (button && command === "bench-events") result = await press(command);
++            else if (!button && command === "bench-commands") result = targets.timed();
+             else if (!button && command === "snapshot") result = targets.snapshot();
+             else if (!button && command === "reset") await targets.reset();
+             else if (sensors && command.startsWith("sensor ")) await sensors(command.slice(7));
+--- a/tests/lab/c6/network.py
++++ b/tests/lab/c6/network.py
+@@ -174,7 +174,7 @@
+         args += ["--thread-sim", "bind:9002,peer:127.0.0.1:9102"]
+     while True:
+         process = await asyncio.create_subprocess_exec(
+-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
++            *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+         )
+
+         async def observe(process):
+@@ -182,6 +182,10 @@
+             with (RUN / "board.log").open("ab", buffering=0) as log:
+                 async for line in process.stdout:
+                     log.write(line)
++                    if match := re.search(rb"bench_ps=([LN]) requested=(\d+) actual=(\d+) set=(\d+) get=(\d+)", line):
++                        ack = RUN / "bench-ack.new"
++                        ack.write_text(" ".join(x.decode() for x in match.groups()))
++                        ack.replace(RUN / "bench-ack")
+                     observe_radio("reflex", line)
+                     if match := re.search(rb"Manual pairing code: ([0-9-]+)", line):
+                         (RUN / "pairing-code").write_text(
+@@ -208,6 +212,11 @@
+
+         observer = asyncio.create_task(observe(process))
+         while not (RUN / "power-off").exists():
++            req = RUN / "bench-req"
++            if req.is_file():
++                process.stdin.write(req.read_bytes() + b"\r\n")
++                await process.stdin.drain()
++                req.unlink()
+             if process.returncode is not None:
+                 raise RuntimeError(f"ESPHome emulator exited with {process.returncode}")
+             await asyncio.sleep(0.2)
+--- a/tests/lab/c6/lab_status.h
++++ b/tests/lab/c6/lab_status.h
+@@ -1,4 +1,6 @@
+ #pragma once
++#include <driver/usb_serial_jtag.h>
++#include <esp_wifi.h>
+
+ #include "esphome/components/matter_reflex/reflex_runtime.h"
+ #include "esphome/components/matter_reflex/reflex_peers.h"
+@@ -8,6 +10,15 @@
+ #endif
+
+ inline void lab_report_status() {
++    char mode;
++    while (usb_serial_jtag_read_bytes(&mode, 1, 0) == 1) {
++        if (mode != 'L' && mode != 'N') continue;
++        wifi_ps_type_t requested = mode == 'L' ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE;
++        wifi_ps_type_t actual = WIFI_PS_MAX_MODEM;
++        esp_err_t set = esp_wifi_set_ps(requested);
++        esp_err_t get = esp_wifi_get_ps(&actual);
++        ESP_LOGI("lab", "bench_ps=%c requested=%d actual=%d set=%d get=%d", mode, requested, actual, set, get);
++    }
+     esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+ #ifdef USE_OPENTHREAD_BORDER_ROUTER
+     if (reflex_runtime::self_node()) {
+--- /dev/null
++++ b/tests/lab/bench.py
+@@ -0,0 +1,46 @@
++import json
++import random
++import time
++
++def measure(board, call, reflex, eventually):
++    blocks = ("L", "N", "N", "L")
++    def count():
++        return len(call("targets", "bench-commands"))
++    def press():
++        before = len(call("button", "bench-events"))
++        previous = count()
++        call("targets", "reset")
++        call("button", "double")
++        def receipt():
++            commands = call("targets", "bench-commands")[previous:]
++            if not commands:
++                return None
++            assert len(commands) == 1 and commands[0]["sender"] == reflex and commands[0]["command"] == "on", commands
++            return commands[0]["us"]
++        stop = eventually(receipt, "single authenticated lamp ON", timeout=20)
++        start = call("button", "bench-events")[before:]
++        assert len(start) == 1 and stop >= start[0], (start, stop)
++        assert call("targets", "snapshot") == {"commands":[{"sender": reflex, "command":"on"}], "on":True, "tilt":0}
++        return (stop-start[0])/1000
++    for b, mode in enumerate(blocks):
++        ack = board.run / "bench-ack"
++        ack.unlink(missing_ok=True)
++        req = board.run / "bench-req.new"
++        req.write_text(mode)
++        req.replace(board.run / "bench-req")
++        seen = eventually(lambda: ack.read_text() if ack.exists() else None, "guest power mode readback",timeout=45)
++        expected = 1 if mode == "L" else 0
++        assert seen == f"{mode} {expected} {expected} 0 0", seen
++        print(f"Block {b+1} guest readback {seen}", flush=True)
++        time.sleep(2)
++        press()
++        gap = random.Random(42)
++        for i in range(10):
++            time.sleep(gap.uniform(.1,.7))
++            ms = press()
++            row = {"block":b+1, "mode":mode, "sample":i+1, "ms":ms}
++            print("SAMPLE " + json.dumps(row),flush=True)
++        time.sleep(1)
++        assert count() == (b+1)*11
++    assert len(call("button", "bench-events")) == 44
++    print("BENCH COMPLETE", flush=True)
+--- a/tests/lab/ha_smoke.py
++++ b/tests/lab/ha_smoke.py
+@@ -611,5 +611,10 @@
+                     )
+
+             wait_ready()
++            if transport == "wifi" and mode == "direct" and os.getenv("REFLEX_LAB_WIFI_PS_BENCH") == "1":
++                from bench import measure
++
++                measure(board, peer_call, reflex, eventually)
++                return
+             if toggle:
+                 from c6.toggle import verify_toggle_recovery

@@ -298,6 +298,14 @@ def main():
         help="measure N commissioned board restarts with Matter Server offline",
     )
     takeover.add_argument(
+        "--transport", choices=("thread", "wifi", "combined"), default="thread"
+    )
+    takeover.add_argument(
+        "--sleepy-input",
+        action="store_true",
+        help="require the combined Thread input to stay attached with its receiver off when idle",
+    )
+    takeover.add_argument(
         "--mode",
         choices=("fallback", "direct", "advanced", "all"),
         default="fallback",
@@ -340,6 +348,8 @@ def main():
         help="observe targets for late duplicate commands after each phase (default 4)",
     )
     args = parser.parse_args()
+    if args.mode == "takeover" and args.sleepy_input and args.transport != "combined":
+        parser.error("--sleepy-input requires --transport combined")
     if args.mode in {"smoke-ha", "takeover", "run"}:
 
         def terminate(signum, frame):
@@ -356,6 +366,10 @@ def main():
                 parser.error("--cold-boots must be nonnegative")
             if args.toggle_recovery and args.policy != "direct":
                 parser.error("--toggle-recovery requires --mode direct")
+            prepare = Path(__file__).resolve().parent / "c6" / "prepare"
+            subprocess.run(
+                [prepare, args.transport], cwd=prepare.parents[3], check=True
+            )
             policies = (
                 ("direct", "fallback", "advanced")
                 if args.policy == "all"
@@ -367,6 +381,8 @@ def main():
                     mode=policy,
                     cold_boots=args.cold_boots,
                     toggle=args.toggle_recovery,
+                    transport=args.transport,
+                    sleepy_input=args.sleepy_input,
                 )
     elif args.mode == "up":
         up(args.interface)

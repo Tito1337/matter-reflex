@@ -14,11 +14,16 @@
 #include <clusters/WindowCovering/Commands.h>
 #include <controller/InvokeInteraction.h>
 #include <platform/ConnectivityManager.h>
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 #include <platform/ThreadStackManager.h>
 #include <openthread/netdata.h>
 #include <openthread/thread.h>
+#endif
 #include <transport/SecureSession.h>
 #include <esp_log.h>
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFI_STATION
+#include <esp_netif.h>
+#endif
 #include <esp_timer.h>
 #include <algorithm>
 #include <array>
@@ -48,6 +53,20 @@ namespace reflex_peers {
 using namespace chip;
 using namespace chip::app;
 namespace {
+bool network_ready() {
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFI_STATION
+    auto *station = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_ip6_addr_t local;
+    if (station && esp_netif_is_netif_up(station) &&
+        esp_netif_get_ip6_linklocal(station, &local) == ESP_OK) return true;
+#endif
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
+    return DeviceLayer::ConnectivityMgr().IsThreadAttached();
+#else
+    return false;
+#endif
+}
+
 CASEClientPool<CHIP_CONFIG_DEVICE_MAX_ACTIVE_CASE_CLIENTS> direct_clients;
 struct ReleaseCASEClient {
     void operator()(CASEClient *client) const { direct_clients.Release(client); }
@@ -235,8 +254,11 @@ private:
     std::unique_ptr<CASEClient, ReleaseCASEClient> direct_client;
     int64_t retry_at = 0;
     unsigned backoff = 1;
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     int64_t network_data_deadline = 0;
+#endif
     bool initial_route_ready() {
+#if CHIP_DEVICE_CONFIG_ENABLE_THREAD
         const auto *endpoint = address_cache.lookup(node);
         if (retry_at || !endpoint) return true;
         const auto now = esp_timer_get_time();
@@ -251,6 +273,9 @@ private:
                        otThreadGetMeshLocalPrefix(ot)->m8));
         thread.UnlockThreadStack();
         return ready;
+#else
+        return true;
+#endif
     }
 
     void disconnect() {
@@ -531,7 +556,7 @@ void configure(FabricIndex index, const reflex::Rules &rules, nvs_handle_t stora
 }
 uint32_t direct_ready_mask() {
     uint32_t mask = 0;
-    if (!rule_set || !DeviceLayer::ConnectivityMgr().IsThreadAttached()) return mask;
+    if (!rule_set || !network_ready()) return mask;
     for (size_t i = 0; i < rule_set->count; ++i) {
         const auto &rule = rule_set->rows[i];
         if (!rule.direct) continue;
@@ -545,7 +570,7 @@ uint32_t direct_ready_mask() {
 
 Readiness readiness() {
     unsigned ready = 0;
-    if (required_peers && DeviceLayer::ConnectivityMgr().IsThreadAttached()) {
+    if (required_peers && network_ready()) {
         for (const auto &peer : peers)
             if (peer && peer->established && peer->has_active_session()) ++ready;
     }
@@ -554,7 +579,7 @@ Readiness readiness() {
 
 void tick() {
     if (!fabric || !rule_set) return;
-    const bool attached = DeviceLayer::ConnectivityMgr().IsThreadAttached();
+    const bool attached = network_ready();
     for (size_t i = 0; i < rule_set->count; ++i) {
         const auto &rule = rule_set->rows[i];
         if (auto *p = ensure(rule.source)) {

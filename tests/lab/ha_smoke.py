@@ -15,6 +15,68 @@ from uuid import uuid4
 from sensor_cases import SENSOR_CASES
 
 
+def configure_esphome(session, base, flow_url, host, key):
+    # Resolve the real ESPHome service on the isolated LAN. Using its ULA
+    # keeps the HA connection on tap0 when Podman also supplies eth0.
+    import socket
+    from ipaddress import IPv6Address
+
+    from zeroconf import IPVersion, Zeroconf
+
+    service = "_esphomelib._tcp.local."
+    with Zeroconf(
+        interfaces=[socket.if_nametoindex("tap0")], ip_version=IPVersion.V6Only
+    ) as discovery:
+        for _ in range(30):
+            info = discovery.get_service_info(
+                service, f"{host.split('.')[0]}.{service}", timeout=2000
+            )
+            if info and info.server == host + ".":
+                addresses = [
+                    ip
+                    for ip in info.parsed_addresses()
+                    if ":" in ip and IPv6Address(ip) in ip_network("fd42:5246:1::/64")
+                ]
+                if addresses:
+                    break
+            time.sleep(1)
+        else:
+            raise RuntimeError(
+                f"ESPHome DNS-SD did not advertise {host} and its IPv6 LAN address"
+            )
+
+    form = session.post(flow_url, json={"handler": "esphome"}, timeout=30)
+    form.raise_for_status()
+    url = flow_url + "/" + form.json()["flow_id"]
+    for fields in (
+        {"host": addresses[0], "port": info.port},
+        {"noise_psk": key},
+    ):
+        result = session.post(url, json=fields, timeout=45)
+        result.raise_for_status()
+        step = result.json()
+        if step.get("errors"):
+            raise RuntimeError(
+                f"ESPHome setup failed at {step.get('step_id')}: {step['errors']}"
+            )
+    if step["type"] != "create_entry":
+        raise RuntimeError(f"ESPHome setup ended at {step.get('step_id')}")
+    api_id = step["result"]["entry_id"]
+    action = host.split(".")[0].replace("-", "_") + "_reflex_exchange"
+    for _ in range(60):
+        services = session.get(base + "/api/services", timeout=10)
+        services.raise_for_status()
+        if any(
+            d["domain"] == "esphome" and action in d["services"]
+            for d in services.json()
+        ):
+            break
+        time.sleep(1)
+    else:
+        raise RuntimeError("Encrypted ESPHome rule exchange action was unavailable")
+    return api_id
+
+
 def configure_ha(server_address):
     # Runs inside the new HA container. The temporary admin token stays there.
     import requests
@@ -73,6 +135,11 @@ def configure_ha(server_address):
     commissioning = json.load(sys.stdin)
     asyncio.run(commission(base, commissioning["codes"]))
     entry_id = None
+    api_id = None
+    if commissioning.get("api_key"):
+        api_id = configure_esphome(
+            session, base, flow_url, commissioning["api_host"], commissioning["api_key"]
+        )
     if commissioning["with_board"]:
         flow = session.post(flow_url, json={"handler": "matter_reflex"}, timeout=30)
         flow.raise_for_status()
@@ -88,6 +155,15 @@ def configure_ha(server_address):
             flow_url + "/" + form["flow_id"], json={"node": choice[0]}, timeout=45
         )
         response.raise_for_status()
+        if api_id:
+            if response.json().get("step_id") != "esphome":
+                raise RuntimeError("Reflex did not offer the encrypted ESPHome rules channel")
+            response = session.post(
+                flow_url + "/" + form["flow_id"],
+                json={"esphome_entry_id": api_id},
+                timeout=45,
+            )
+            response.raise_for_status()
         result = response.json()
         if result["type"] != "create_entry":
             raise RuntimeError(
@@ -104,6 +180,7 @@ def configure_ha(server_address):
             mode=commissioning.get("mode", "fallback"),
             reflex_entry_id=entry_id,
             toggle=commissioning.get("toggle", False),
+            thread_contact=commissioning.get("thread_contact", False),
         )
     )
     # Only the disposable HA container reads this private file on its /config tmpfs.
@@ -250,7 +327,7 @@ def measure_cold_boot(board, reflex, peer_call, restored, fallback):
     )
 
 
-def smoke(with_board=False, mode="fallback", cold_boots=0, toggle=False):
+def smoke(with_board=False, mode="fallback", cold_boots=0, toggle=False, *, transport="thread", sleepy_input=False):
     from lab import (
         FIXTURES,
         PODMAN,
@@ -299,7 +376,12 @@ def smoke(with_board=False, mode="fallback", cold_boots=0, toggle=False):
         if with_board:
             from c6 import ROOT, EmulatedBoard
 
-            board = EmulatedBoard(cleanup, start, prefix, ha)
+            if transport == "thread":
+                board = EmulatedBoard(cleanup, start, prefix, ha)
+            else:
+                from c6.esphome import NetworkBoard
+
+                board = NetworkBoard(cleanup, start, prefix, ha, transport)
             integration = [
                 "--volume",
                 str(ROOT / "custom_components") + ":/config/custom_components:ro,z",
@@ -325,13 +407,18 @@ def smoke(with_board=False, mode="fallback", cold_boots=0, toggle=False):
         net = json.loads(podman("network", "inspect", project))[0]
         subnets = (ip_network(n["subnet"]) for n in net["subnets"])
         server_ip = str(next(n for n in subnets if n.version == 4)[-2])
+        server_options = [] if board else ["--ip", server_ip]
+        if board and transport == "thread":
+            # The standalone firmware uses the vendor cluster for management.
+            # ESPHome profiles exercise the encrypted API with the stock controller.
+            server_options = [
+                "--volume", mount,
+                "--env", "NODE_OPTIONS=--import=/app/reflex-lab/reflex-cluster.mjs",
+            ]
         start(
             "server",
             matter,
-            [
-                "--volume", mount,
-                "--env", "NODE_OPTIONS=--import=/app/reflex-lab/reflex-cluster.mjs",
-            ] if board else ["--ip", server_ip],
+            server_options,
             [
                 "--primary-interface",
                 "tap0" if board else "eth0",
@@ -377,7 +464,12 @@ def smoke(with_board=False, mode="fallback", cold_boots=0, toggle=False):
 
         codes = [eventually(pairing_code, peer, peer) for peer in FIXTURES]
         if board:
+            # Prove the original radio is routing the input before starting the
+            # second router. Keep the Matter node commissioning order stable.
+            contact_code = board.contact_code() if transport == "combined" else None
             codes.append(board.pairing_code())
+            if contact_code:
+                codes.append(contact_code)
         subprocess.run(
             [
                 *PODMAN,
@@ -394,6 +486,9 @@ def smoke(with_board=False, mode="fallback", cold_boots=0, toggle=False):
                     "with_board": bool(board),
                     "mode": mode,
                     "toggle": toggle,
+                    "api_key": getattr(board, "api_key", None),
+                    "api_host": getattr(board, "api_host", None),
+                    "thread_contact": transport == "combined",
                 }
             ),
             text=True,
@@ -441,6 +536,42 @@ def smoke(with_board=False, mode="fallback", cold_boots=0, toggle=False):
             )
             nodes = {"esp": reflex, "ha": controller, "none": None}
             direct_rows = sum(handlers(mode, rule)[0] == "esp" for rule in ADVANCED)
+
+            if transport == "combined":
+                direct_rows += sum(
+                    handlers(mode, rule)[0] == "esp"
+                    for rule in ("contact", "long_press")
+                )
+
+            def cross_network_press(offline=None):
+                if offline == "ha":
+                    board.wait_thread_traffic()
+                peer_call("targets", "reset")
+                expected = {"commands": [], "on": False, "tilt": 0}
+                for input_key, rule, command in (
+                    ("o", "contact", "on"),
+                    ("p", "long_press", "off"),
+                ):
+                    board.set_contact(input_key)
+                    sender = nodes[executor(mode, rule, offline)]
+                    if sender is not None:
+                        expected["commands"].append(
+                            {"sender": sender, "command": command}
+                        )
+                        expected["on"] = command == "on"
+                        eventually(
+                            lambda: peer_call("targets", "snapshot") == expected,
+                            f"{rule} delivered exactly one {command} command from {sender}",
+                            timeout=60,
+                        )
+                board.set_contact("c")
+                time.sleep(4)
+                if peer_call("targets", "snapshot") != expected:
+                    raise RuntimeError("Duplicate or unexpected cross-network command")
+                print(
+                    f"Verified Thread contact and long press against LAN lamp state and senders {expected}.",
+                    flush=True,
+                )
 
             def wait_ready():
                 image = wait_ha("ready", str(direct_rows)) if direct_rows else None
@@ -493,6 +624,12 @@ def smoke(with_board=False, mode="fallback", cold_boots=0, toggle=False):
                     verify_toggle_recovery(board, reflex, peer_call, prefix)
                 return
             verify()
+            if transport == "combined":
+                if sleepy_input:
+                    # Enter sleepy operation after commissioning, before the first input.
+                    board.set_contact("s")
+                board.wait_parent("host", sleepy=sleepy_input)
+                cross_network_press()
         else:
             controller = phase(None, 4, peer_call=peer_call)
             sensor_phase(controller, peer_call)
@@ -505,6 +642,41 @@ def smoke(with_board=False, mode="fallback", cold_boots=0, toggle=False):
                 measure_cold_boot(
                     board, reflex, peer_call, restored, mode == "fallback"
                 )
+            if transport in {"wifi", "combined"}:
+                # Freeze Core as well as stopping Matter Server. The TAP/AP, Thread
+                # input and LAN actuator are independent of both HA processes.
+                podman("kill", "--signal", "STOP", prefix + "ha")
+                try:
+                    if transport == "combined":
+                        board.stop_host_router(sleepy=sleepy_input)
+                        cross_network_press("ha")
+                    board.power_off()
+                    board.power_on()
+                    eventually(
+                        subscribed,
+                        "subscriptions after offline boot",
+                        reflex,
+                        peer_call,
+                        timeout=240,
+                    )
+                    board.wait(
+                        "restored peers and expired lease after offline boot",
+                        lambda s: (
+                            s["node"] == reflex
+                            and s["active"]
+                            and s["required"] > 0
+                            and s["ready"] == s["required"]
+                        ),
+                        timeout=240,
+                    )
+                    if transport == "combined":
+                        board.wait_parent("reflex", sleepy=sleepy_input)
+                        cross_network_press("ha")
+                    verify("ha")
+                finally:
+                    if transport == "combined":
+                        board.restart_host_router()
+                    podman("kill", "--signal", "CONT", prefix + "ha")
             if (
                 podman("inspect", "--format", "{{.State.Running}}", prefix + "server")
                 != "false"
@@ -549,6 +721,8 @@ def smoke(with_board=False, mode="fallback", cold_boots=0, toggle=False):
             return
         wait_ready()
         verify()
+        if transport == "combined":
+            cross_network_press()
         previous = subscriptions(reflex, peer_call)
         board.power_off()
         # Last in-flight renewal plus the integration's ten-second reciprocal lease.

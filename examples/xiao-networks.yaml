@@ -1,0 +1,21 @@
+# Fresh checkout installation. Supply credentials as substitutions in the device YAML.
+packages:
+  board: !include xiao-base.yaml
+  management: !include encrypted-api.yaml
+  wifi_station: !include
+    file: network/wifi.yaml
+    condition: ${reflex_wifi_ssid is defined or reflex_wifi_password is defined}
+  thread_mesh: !include
+    file: network/thread.yaml
+    condition: ${reflex_thread_tlv is defined}
+  border_router: !include
+    file: network/border-router.yaml
+    condition: ${reflex_wifi_ssid is defined and reflex_thread_tlv is defined}
+
+# All three profiles share app slots large enough for the border-router firmware.
+esp32:
+  partitions: ${reflex_partitions}
+
+substitutions:
+  reflex_source: ../components
+  reflex_partitions: partitions-ota.csv

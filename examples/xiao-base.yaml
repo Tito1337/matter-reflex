@@ -15,9 +15,6 @@ esp32:
 
 logger:
 
-openthread:
-  device_type: FTD
-
 matter:
   product_id: 0x8000
 
