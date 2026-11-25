@@ -2,11 +2,11 @@
 
 **Your light switches should keep working when Home Assistant goes down.**
 
-A button and a light on the same Thread network shouldn't need a running Home Assistant server just to talk to each other. Matter Reflex gives supported automations a home on a small **ESP32-C6 running ESPHome**, so the basics can keep working through a server restart or outage.
+A button and a light shouldn't need a running Home Assistant server just to talk to each other. Matter Reflex gives supported automations a home on a small **ESP32-C6 running ESPHome**, so the basics can keep working through a server restart or outage.
 
 You still configure your automations in Home Assistant. Reflex copies the supported rules onto the ESP, which listens for Matter button presses and sensor reports and sends commands directly to the devices.
 
-[Get started](#installation) · [ESPHome installation guide](examples/README.md) · [Add Reflex to your ESPHome node](docs/esphome-component.md) · [Troubleshooting](docs/troubleshooting.md)
+[Get started](#installation) · [Network modes](#thread-wi-fi-and-dual-mode) · [ESPHome installation guide](examples/README.md) · [Add Reflex to your ESPHome node](docs/esphome-component.md) · [Troubleshooting](docs/troubleshooting.md)
 
 ## Why "Reflex"?
 
@@ -17,11 +17,27 @@ A spinal reflex has its own path. Matter Reflex follows the same idea: the ESP k
 ## What you can do
 
 - **Keep buttons and sensors useful during an outage.** The ESP stores its rules in flash and runs them independently of HA.
-- **Run directly on Thread.** For devices on the same Thread mesh, the control path stays inside that mesh, without passing through HA, Matter Server or your LAN. This is designed to survive loss of the border router too, provided the remaining mesh stays connected.
+- **Send Matter commands directly from the ESP.** Button presses and sensor reports can trigger actions without going through HA or Matter Server. The network you choose determines which connections the automation still needs.
 - **Choose who handles each automation.** Use the ESP for everyday operation or just for fallback.
 - **Keep a simpler backup for a complex routine.** HA can run the full automation while the ESP handles a basic version during an outage.
 - **Keep using Home Assistant's automation editor.** Apply a label, choose a mode and let Reflex synchronize the rules and Matter permissions.
 - **See what the ESP did.** Command results appear in the automation's Activity when HA can receive them.
+
+## Thread, Wi-Fi and dual mode
+
+The published installation uses **Thread**. Experimental builds add **Wi-Fi-only** and **Wi-Fi + Thread** configurations, so Reflex can fit more home networks. Those configurations are still in development and aren't yet included in `main`.
+
+| Configuration | How it connects |
+| --- | --- |
+| **Thread** | The ESP joins your Thread mesh. For sources and targets on that same mesh, the control path stays off your LAN. |
+| **Wi-Fi only · Experimental** | The ESP joins your Wi-Fi network and controls Matter devices over the LAN. It can also reach Thread devices through an existing border router. |
+| **Wi-Fi + Thread · Experimental** | The ESP joins both networks and runs ESPHome's built-in Thread border router, providing routing and discovery between the surviving mesh and LAN. |
+
+Direct and fallback reflexes work the same way in all three configurations. Wi-Fi operation still needs a working access point and LAN; reaching Thread devices from a Wi-Fi-only ESP also needs a border router. In dual mode, the ESP can provide that border-router role itself, including when the HA host and its border router go offline.
+
+Thread-to-Thread control is designed to keep working without the LAN or an external border router, provided the remaining mesh stays connected. In dual mode, battery-powered devices may need time to find a new parent after a router disappears.
+
+Wi-Fi-only operation has been tested on a physical XIAO with HA Core stopped. Wi-Fi and dual-mode outage and recovery scenarios also have emulator coverage; dual-mode radio coexistence and sleepy-device handover still need hardware validation.
 
 ## Direct and fallback reflexes
 
@@ -90,7 +106,7 @@ The ESP stores up to **32 trigger-to-target pairs**. One trigger controlling thr
 
 ## Installation
 
-You'll need Home Assistant with Matter, a working Thread network and border router for setup, access to your Thread dataset, and a **Seeed Studio XIAO ESP32-C6** with a USB data cable. The firmware uses ESPHome's ESP-IDF framework and a development Matter attestation profile.
+The **Thread installation below** needs Home Assistant with Matter, a working Thread network and border router for setup, access to your Thread dataset, and a **Seeed Studio XIAO ESP32-C6** with a USB data cable. The firmware uses ESPHome's ESP-IDF framework and a development Matter attestation profile.
 
 1. **Install the ESPHome firmware.** Follow the [XIAO installation guide](examples/README.md#thread-ota) using the fresh-board OTA profile. It includes encrypted management, updates over Thread and a takeover LED. You can also [add Reflex to an existing ESPHome node](docs/esphome-component.md).
 2. **Connect the board.** Commission it through Home Assistant's Matter integration, then add it to the ESPHome integration using its encryption key and Thread IPv6 address.
@@ -109,7 +125,7 @@ Failover takes time: a trigger during the detection interval can be missed. Duri
 
 ## Hardware tests
 
-**Experimental, and already running in a real home.** On November 24, 2026, all six BILRESA gestures controlled a desk lamp, ceiling light and blind with Home Assistant **offline**. A separate wall button also toggled the desk lamp. The seven gestures were configured through ten independent automations.
+**Experimental, and already running in a real home.** With the Thread configuration on November 24, 2026, all six BILRESA gestures controlled a desk lamp, ceiling light and blind with Home Assistant **offline**. A separate wall button also toggled the desk lamp. The seven gestures were configured through ten independent automations.
 
 Earlier hardware checks covered BILRESA controlling a KAJPLATS light, a GRILLPLATS plug and a Zemismart shade with Matter Server stopped, plus rule restoration after an ESP restart and handback after HA recovered. [Failover timing and traffic measurements](docs/lease-measurements.md)
 
