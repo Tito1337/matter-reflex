@@ -25,7 +25,7 @@ A spinal reflex has its own path. Matter Reflex follows the same idea: the ESP k
 
 ## Thread, Wi-Fi and dual mode
 
-The published installation uses **Thread**. Experimental builds add **Wi-Fi-only** and **Wi-Fi + Thread** configurations, so Reflex can fit more home networks. Those configurations are still in development and aren't yet included in `main`.
+The published installation uses **Thread**. The [experimental Wi-Fi feature branch](https://github.com/Tito1337/matter-reflex/tree/feature/wifi-support) adds **Wi-Fi-only** and **Wi-Fi + Thread** configurations. See the [setup guide and test results](https://github.com/Tito1337/matter-reflex/blob/feature/wifi-support/docs/wifi-support.md) to try either mode.
 
 | Configuration | How it connects |
 | --- | --- |
