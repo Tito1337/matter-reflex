@@ -58,7 +58,7 @@ set -o pipefail
 ./dev ha python - < tests/contract/encode.py | ./dev idf bash tools/test-engine
 ```
 
-Run `./dev test-sensors` to exercise the README contact and motion automations plus leak and environmental rules on an offline Matter.js network. This uses the HA test image and a host C++17 compiler with static linking, falling back to the pinned IDF image if g++ is absent. The host engine processes subscription reports with a deterministic lease clock. The simulated peers execute the resulting commands.
+Run `./dev test-sensors` to exercise the [contact and motion examples](examples/sensor-automations.yaml) plus leak and environmental rules on an offline Matter.js network. This uses the HA test image and a host C++17 compiler with static linking, falling back to the pinned IDF image if g++ is absent. The host engine processes subscription reports with a deterministic lease clock. The simulated peers execute the resulting commands.
 
 For independent virtual buttons, lamps and blinds, the [Matter outage lab](tests/lab/README.md) includes an offline protocol check, a disposable Home Assistant fabric, and an outage scenario for a commissioned XIAO.
 

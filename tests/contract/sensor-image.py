@@ -13,13 +13,17 @@ lamp = Endpoint(42, 1, dimmable=True, supports_transition=True)
 plug = Endpoint(42, 2, plug_ops=frozenset({1}))
 shade = Endpoint(42, 3, cover_ops=frozenset({10}))
 rows = []
-readme = Path("README.md").read_text()
-for ep, model, kind, source in (
-    (1, "MYGGBETT", "contact", "binary_sensor.front_door"),
-    (2, "MYGGSPRAY", "occupancy", "binary_sensor.hall_motion"),
+examples = yaml.safe_load(
+    Path("examples/sensor-automations.yaml").read_text(encoding="utf-8")
+)
+for (ep, kind, source), config in zip(
+    (
+        (1, "contact", "binary_sensor.front_door"),
+        (2, "occupancy", "binary_sensor.hall_motion"),
+    ),
+    examples,
+    strict=True,
 ):
-    section = readme.split(f"### IKEA {model}", 1)[1]
-    config = yaml.safe_load(section.split("```yaml\n", 1)[1].split("```", 1)[0])
     endpoints = {source: Endpoint(21, ep, sensor_kind=kind), "light.hall": lamp}
     rows.extend(compile_automation(kind, config, endpoints.__getitem__))
 

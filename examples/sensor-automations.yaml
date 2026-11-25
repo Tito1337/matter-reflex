@@ -1,0 +1,27 @@
+# Two Home Assistant automations. Replace the entity IDs with your own,
+# enable the automations and apply the reflex label in Home Assistant.
+- alias: Hall light when the door opens
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.front_door
+      from: "off"
+      to: "on"
+  actions:
+    - action: light.turn_on
+      target:
+        entity_id: light.hall
+  mode: single
+
+- alias: Hall light on motion
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.hall_motion
+      to: "on"
+  actions:
+    - action: light.turn_on
+      target:
+        entity_id: light.hall
+      data:
+        brightness: 200
+        transition: 0.2
+  mode: single
