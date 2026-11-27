@@ -109,7 +109,7 @@ The ESP stores up to **32 trigger-to-target pairs**. One trigger controlling thr
 The **Thread installation below** needs Home Assistant with Matter, a working Thread network and border router for setup, access to your Thread dataset, and a **Seeed Studio XIAO ESP32-C6** with a USB data cable. The firmware uses ESPHome's ESP-IDF framework and a development Matter attestation profile.
 
 1. **Install the ESPHome firmware.** Follow the [XIAO installation guide](examples/README.md#thread-ota) using the fresh-board OTA profile. It includes encrypted management, updates over Thread and a takeover LED. You can also [add Reflex to an existing ESPHome node](docs/esphome-component.md).
-2. **Connect the board.** Commission it through Home Assistant's Matter integration, then add it to the ESPHome integration using its encryption key and Thread IPv6 address.
+2. **Connect the board.** Commission it through Home Assistant's Matter integration. Matter Server must [accept the development attestation](examples/README.md#commission-with-development-attestation). Then add it to the ESPHome integration using its encryption key and Thread IPv6 address.
 3. **Install the HA integration.** Copy [the `matter_reflex` directory](custom_components/matter_reflex) into `config/custom_components/`, check your configuration and restart HA. Under **Settings → Devices & services**, add **Matter Reflex**, select the commissioned board and choose its encrypted ESPHome connection if prompted.
 4. **Try the button example.** Apply the **reflex** label, choose your mode, and confirm **Synchronized** with no related **Repairs** issues.
 

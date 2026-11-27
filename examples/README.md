@@ -32,6 +32,28 @@ The package defines an internal binary sensor named `reflex_active`. Its `on_pre
 
 The subscribed and required peer sensors sample the local Matter state every five seconds and publish changes. The required count includes each distinct button or target node once. Reset reason and minimum free heap use ESPHome’s debug component.
 
+## Commission with development attestation
+
+The board presents a CHIP development attestation certificate with test vendor ID `0xFFF1`. Home Assistant's Matter Server rejects it by default, and commissioning fails with a test or development certificate error. With the matter.js server container (`ghcr.io/matter-js/matterjs-server`), set the environment variable `ENABLE_TEST_NET_DCL=true` and restart the server before commissioning. This setting also admits other devices that use test certificates.
+
+## Other ESP32-C6 boards
+
+The base package targets the XIAO. Other ESP32-C6 boards with 4 MB of flash can override the board and the takeover LED. This example for an M5Stack NanoC6 uses its blue LED on GPIO7, which is active high:
+
+```yaml
+esp32:
+  board: esp32-c6-devkitc-1
+  flash_size: 4MB
+
+output:
+  - id: !extend reflex_indicator
+    pin:
+      number: GPIO7
+      inverted: false
+```
+
+Add these keys next to the `packages`, `substitutions`, `esphome` and `openthread` blocks shown above.
+
 ## Encrypted ESPHome management
 
 Include `examples/encrypted-api.yaml` as a second package and set the local substitution `reflex_api_key: !secret reflex_api_key` to a unique ESPHome encryption key. Add the device to the ESPHome integration in Home Assistant using its Thread IPv6 address and that key. The native API exposes peer and heap diagnostics and the `reflex_exchange` action. An empty image reads status. A complete hexadecimal rules image is validated and committed only for the specified 16-digit compressed fabric and node IDs. The response contains the installed hash. The lease continues to travel through Matter Server, and API client loss does not reboot the device.
@@ -123,3 +145,5 @@ On another restart, the first peer subscription completed 47 seconds after the R
 In a Bureau test the same day, the USB log showed the XIAO active from 20:31:03 to 20:31:33 local time. During the test the tester saw the ceiling light turn on after the upper-button double press and turned it back off. The board’s execution count rose from zero to two, and the corresponding Home Assistant double-press automation did not run. The tester also observed the Bureau light and Zemismart blind respond to long presses. Home Assistant recorded an upper-button long press at 20:31:36, after the board had returned to standby, so the outage test established direct control of the ceiling light only.
 
 On November 24, 2026, physical feedback confirmed the six BILRESA gestures and a wall-button toggle in direct mode with Home Assistant offline. Their ten independent rules controlled a desk lamp, ceiling light and blind. An application-only update removing HTTP then preserved the same Matter fabric, node and rule hash. The encrypted API reported all ten direct rules ready and seven of seven peers subscribed; Home Assistant reported synchronization with no Repairs issues, and TCP port 5581 was closed. The update did not change the partition table or re-pair any devices.
+
+On November 27, 2026, an M5Stack NanoC6 ran the fresh-board package with the overrides from [Other ESP32-C6 boards](#other-esp32-c6-boards). The board restarted when its USB log was opened, a few seconds before Matter Server was stopped. It subscribed to a KAJPLATS light 1.2 seconds after boot and to a BILRESA button 6.3 seconds after boot. Home Assistant and the border routers stayed up. The board logged `Lease state: active` 10.4 seconds after boot. A double press 41 seconds after boot logged one rule result with status `0x000` and toggled the light. The blue takeover LED lit during the outage. Matter Server was restarted less than 80 seconds after it stopped, and the board logged standby 84 seconds after boot. Home Assistant showed **Active** off a few minutes later, and its execution counter had advanced once. An earlier attempt that day, run without a USB log, recorded no execution, and its cause is unknown.
